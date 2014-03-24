@@ -1,0 +1,12 @@
+#!/usr/bin/env python
+"""
+External grader daemon management
+
+"""
+import time
+
+try:
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt, SystemExit:
+    print " Exiting"
