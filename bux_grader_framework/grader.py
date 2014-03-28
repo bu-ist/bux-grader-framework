@@ -5,6 +5,8 @@
     This module implements the central grader object.
 """
 
+from .conf import Config
+
 
 class Grader(object):
     """ The main grader class.
@@ -13,8 +15,14 @@ class Grader(object):
     >>> grader.config_from_module('yourconfig')
     >>> grader.run()
     """
+
+    #: The configuration class utlized by this grader.
+    #: Defaults to :class:`Config`
+    config_class = Config
+
     def __init__(self):
-        pass
+
+        self._config = None
 
     def run(self):
         """ Starts the grader daemon
@@ -39,15 +47,13 @@ class Grader(object):
     @property
     def config(self):
         """ Holds the grader :class:`Config` object. """
-        pass
+        if self._config is None:
+            self._config = self.config_class()
+        return self._config
 
     @property
     def evaluators(self):
         """ Registry of :class:`BaseEvaluator` classes. """
-        pass
-
-    def _load_config(self):
-        """ Creates grader configuration object. """
         pass
 
     def _load_evaluators(self):
