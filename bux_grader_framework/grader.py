@@ -42,7 +42,7 @@ class Grader(object):
 
         Forwards request to :class:`Config` instance.
         """
-        pass
+        return self.config.from_module(modulename)
 
     @property
     def config(self):

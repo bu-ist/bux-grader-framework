@@ -21,5 +21,11 @@ class TestGrader(unittest.TestCase):
         self.assertTrue(hasattr(self.grader, 'config'))
         self.assertIsInstance(self.grader.config, self.grader.config_class)
 
+    def test_grader_config_from_module(self):
+        result = self.grader.config_from_module('dummy_config')
+        self.assertTrue(result)
+        self.assertIn('XQUEUE_INTERFACE', self.grader.config)
+
+
 if __name__ == '__main__':
     unittest.main()
