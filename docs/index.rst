@@ -3,20 +3,19 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to edX External Grader's documentation!
-===============================================
 
-Contents:
+BU edX Grader Framework
+=======================
+
+An External Grader Framework for use with your edX course.
+
+API Documentation
+-----------------
+
+.. toctree::
+    :maxdepth: 2
+
+    api
 
 .. toctree::
    :maxdepth: 2
-
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-
