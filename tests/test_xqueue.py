@@ -84,54 +84,20 @@ class TestXQueueClient(unittest.TestCase):
                           self.client._parse_xreply, xreply)
 
     def test_get_queuelen(self):
-        xreply = {"return_code": 0, "content": 2}
-        response = MagicMock(spec=requests.Response())
-        response.content = json.dumps(xreply)
-        self.client.session.get = MagicMock(return_value=response)
+        response = (True, "2")
+        self.client._get = MagicMock(return_value=response)
 
         self.assertEquals(2, self.client.get_queuelen("foo"))
 
-        self.client.session.get.assert_called_with(
+        self.client._get.assert_called_with(
             XQUEUE_TEST_CONFIG["url"] + "/xqueue/get_queuelen/",
-            params={"queue_name": "foo"}
+            {"queue_name": "foo"}
             )
 
-    @patch('bux_grader_framework.XQueueClient.login', return_value=True)
-    def test_get_queuelen_with_login(self, mock_login):
-        # Initial `GET "/xqueue/queuelen/"` response
-        initial_response = {"return_code": 1, "content": "login_required"}
-        pre_login_response = MagicMock(spec=requests.Response())
-        pre_login_response.content = json.dumps(initial_response)
-
-        # Post-login `GET "/xqueue/queuelen/"` response
-        final_response = {"return_code": 0, "content": 2}
-        post_login_response = MagicMock(spec=requests.Response())
-        post_login_response.content = json.dumps(final_response)
-
-        side_effect = [pre_login_response, post_login_response]
-        self.client.session.get = MagicMock(side_effect=side_effect)
-
-        self.assertEquals(2, self.client.get_queuelen("foo"))
-
-    @patch('bux_grader_framework.XQueueClient.login',
-           side_effect=BadCredentials)
-    def test_get_queuelen_with_login_failure(self, mock_login):
-        # Initial `GET "/xqueue/queuelen/"` response
-        initial_response = {"return_code": 1, "content": "login_required"}
-        pre_login_response = MagicMock(spec=requests.Response())
-        pre_login_response.content = json.dumps(initial_response)
-
-        self.client.session.get = MagicMock(return_value=pre_login_response)
-
-        self.assertRaises(BadCredentials, self.client.get_queuelen, "foo")
-
     def test_get_queuelen_invalid_queue_name(self):
-        xqueue_response = {"return_code": 1, "content": "Valid queue names "
-                           "are: certificates, edX-Open_DemoX, open-ended, "
-                           "test-pull"}
-        response = MagicMock(spec=requests.Response())
-        response.content = json.dumps(xqueue_response)
-        self.client.session.get = MagicMock(return_value=response)
+        response = (False, "Valid queue names are: certificates,"
+                           "edX-Open_DemoX, open-ended, test-pull")
+        self.client._get = MagicMock(return_value=response)
 
         self.assertRaises(BadQueueName, self.client.get_queuelen, "bar")
 
@@ -167,6 +133,45 @@ class TestXQueueClient(unittest.TestCase):
         self.client.session.get = MagicMock(return_value=response)
 
         self.assertRaises(BadQueueName, self.client.get_submission, "bar")
+
+    def test__get(self):
+        xreply = {"return_code": 0, "content": "success"}
+        response = MagicMock(spec=requests.Response())
+        response.content = json.dumps(xreply)
+
+        self.client.session.get = MagicMock(return_value=response)
+
+        self.assertEquals((True, "success"),
+                          self.client._get("http://example.com"))
+
+    @patch('bux_grader_framework.XQueueClient.login', return_value=True)
+    def test__get_retries_login(self, mock_login):
+        initial_xreply = {"return_code": 1, "content": "login_required"}
+        pre_login_response = MagicMock(spec=requests.Response())
+        pre_login_response.content = json.dumps(initial_xreply)
+
+        final_xreply = {"return_code": 0, "content": "success"}
+        post_login_response = MagicMock(spec=requests.Response())
+        post_login_response.content = json.dumps(final_xreply)
+
+        side_effect = [pre_login_response, post_login_response]
+        self.client.session.get = MagicMock(side_effect=side_effect)
+
+        self.assertEquals((True, "success"),
+                          self.client._get("http://example.com"))
+
+    @patch('bux_grader_framework.XQueueClient.login',
+           side_effect=BadCredentials)
+    def test__get_retries_login_failure(self, mock_login):
+        # Initial `GET "/xqueue/queuelen/"` response
+        initial_response = {"return_code": 1, "content": "login_required"}
+        pre_login_response = MagicMock(spec=requests.Response())
+        pre_login_response.content = json.dumps(initial_response)
+
+        self.client.session.get = MagicMock(return_value=pre_login_response)
+
+        self.assertRaises(BadCredentials, self.client._get,
+                          "http://example.com")
 
 if __name__ == '__main__':
     unittest.main()

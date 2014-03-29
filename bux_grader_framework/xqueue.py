@@ -99,23 +99,16 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_queuelen/")
         params = {"queue_name": queue_name}
 
-        # TODO: Handle connection error / timeouts
-        response = self.session.get(url, params=params)
-
-        success, content = self._parse_xreply(response.content)
+        success, content = self._get(url, params)
         if not success:
-            if "login_required" == content:
-                log.debug("Login required, attempting login")
-                self.login()
-                return self.get_queuelen(queue_name)
-            else:
-                log.error("Could not get queue length, invalid queue name: {}."
-                          "{}".format(queue_name, content))
-                raise BadQueueName(content)
+            log.error("Could not get queue length, invalid queue name: {}."
+                      "{}".format(queue_name, content))
+            raise BadQueueName(content)
 
+        queuelen = int(content)
         log.debug("Retrieved queue length for \"{}\": {}".format(queue_name,
-                                                                 content))
-        return content
+                                                                 queuelen))
+        return queuelen
 
     def get_submission(self, queue_name):
         """ Pop a submission off of XQueue.
@@ -166,7 +159,7 @@ class XQueueClient(object):
         """
         pass
 
-    def _get(self, url, params, retry_login=True):
+    def _get(self, url, params=None, retry_login=True):
         """ Helper method for XQueue get requests
 
         Will automatically login if requested
@@ -180,7 +173,7 @@ class XQueueClient(object):
             if "login_required" == content and retry_login:
                 log.debug("Login required, attempting login")
                 self.login()
-                return self._http_get(url, params, False)
+                return self._get(url, params, False)
 
         return success, content
 
