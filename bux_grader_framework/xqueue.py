@@ -11,13 +11,14 @@ import urlparse
 
 import requests
 
-from .exceptions import BadCredentials, BadQueueName, InvalidXRequest
+from .exceptions import (BadCredentials, BadQueueName,
+                         InvalidXRequest, InvalidGraderReply)
 
 log = logging.getLogger(__name__)
 
 
 class InvalidXReply(Exception):
-    """ Used internally to indicate malformed XQueue reply string """
+    """ Used internally to indicate a malformed XQueue reply """
     pass
 
 
@@ -145,30 +146,48 @@ class XQueueClient(object):
                 "xqueue_body": body,
                 "xqueue_files": files}
 
-    def put_result(self, result):
+    def put_result(self, submission, result):
         """ Posts a result to XQueue.
 
-            :param dict result: A response :class:`dict`
+            :param dict submission: the submission this result is for
+            :param dict result: the grader response :class:`dict`
             :return: ``True`` or ``False``
 
-            :raises: :class:`InvalidXQueueReply` if reply :class:`dict`
-                     posted to XQueue is improperly formatted
+            :raises: :class:`InvalidGraderReply` if XQueue rejects the
+                                                 result
 
-            The response :class:`dict` should be formatted as follows::
+            The result :class:`dict` should be formatted as follows::
 
                 {
                     'correct': True|False,
                     'score': 0-1,
-                    'msg': 'Valid XML message string'
+                    'msg': '<p>Good work!</p>'
                 }
 
             .. warning::
 
                 If the ``msg`` value contains invalid XML the LMS will not
                 accept the response.
-        """
-        pass
 
+        """
+        log.debug("Posting result to XQueue: {}".format(result))
+        url = urlparse.urljoin(self.url, "/xqueue/put_result/")
+
+        post_data = {
+            "xqueue_header": json.dumps(submission["xqueue_header"]),
+            "xqueue_body": json.dumps(result)
+        }
+
+        success, content = self._post(url, post_data)
+        if not success:
+            log.error("Could not post result: {}".format(content))
+            raise InvalidGraderReply(content)
+
+        log.debug("Succesfully posted reply to XQueue.")
+
+        return success
+
+    # TODO: Combine with _post
     def _get(self, url, params=None, retry_login=True):
         """ Helper method for XQueue get requests
 
@@ -177,6 +196,7 @@ class XQueueClient(object):
         """
         # TODO: Handle connection error / timeouts
         response = self.session.get(url, params=params)
+        log.debug("Raw XQueue response: {}".format(str(response)))
 
         success, content = self._parse_xreply(response.content)
         if not success:
@@ -187,6 +207,27 @@ class XQueueClient(object):
 
         return success, content
 
+    # TODO: Combine with _get
+    def _post(self, url, data=None, retry_login=True):
+        """ Helper method for XQueue get requests
+
+        Will automatically login if requested
+
+        """
+        # TODO: Handle connection error / timeouts
+        response = self.session.post(url, data=data)
+        log.debug("Raw XQueue response: {}".format(str(response)))
+
+        success, content = self._parse_xreply(response.content)
+        if not success:
+            if "login_required" == content and retry_login:
+                log.debug("Login required, attempting login")
+                self.login()
+                return self._post(url, data, False)
+
+        return success, content
+
+    # TODO: Break in to two functions -- one for validation, one for parsing
     def _parse_xrequest(self, reply):
         """ Check the format of an XQueue request :class:`dict`.
 

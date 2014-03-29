@@ -5,8 +5,10 @@ import requests
 from mock import MagicMock, patch
 
 from bux_grader_framework.xqueue import XQueueClient, InvalidXReply
-from bux_grader_framework.exceptions import (BadCredentials, BadQueueName,
-                                             InvalidXRequest)
+from bux_grader_framework.exceptions import (BadCredentials,
+                                             BadQueueName,
+                                             InvalidXRequest,
+                                             InvalidGraderReply)
 
 XQUEUE_TEST_CONFIG = {
     "url": "http://localhost:18040",
@@ -44,6 +46,19 @@ DUMMY_XREQUEST_ENCODED = json.dumps({
     }),
     "xqueue_files": json.dumps(DUMMY_XREQUEST["xqueue_files"])
 })
+
+DUMMY_SUBMISSION = {
+    u"xqueue_header": {
+        u"submission_id": u"123",
+        u"submission_key": u"532bf863b9cb0a57313ab2f473196a27"
+        }
+}
+
+DUMMY_GRADER_RESPONSE = {
+    "correct": True,
+    "score": 1,
+    "msg": "<p>Good Job!</p>"
+}
 
 
 class TestXQueueClient(unittest.TestCase):
@@ -127,6 +142,34 @@ class TestXQueueClient(unittest.TestCase):
         self.client.session.get = MagicMock(return_value=response)
 
         self.assertRaises(BadQueueName, self.client.get_submission, "bar")
+
+    # TODO: Mock known XQueue responses
+
+    def test_put_reply(self):
+        response = (True, "")
+        self.client._post = MagicMock(return_value=response)
+
+        self.assertEquals(True,
+                          self.client.put_result(DUMMY_SUBMISSION,
+                                                 DUMMY_GRADER_RESPONSE))
+
+        post_data = {
+            "xqueue_header": json.dumps(DUMMY_SUBMISSION["xqueue_header"]),
+            "xqueue_body": json.dumps(DUMMY_GRADER_RESPONSE)
+        }
+        self.client._post.assert_called_with(
+            XQUEUE_TEST_CONFIG["url"] + "/xqueue/put_result/",
+            post_data
+            )
+
+    def test_put_reply_invalid_reply_format(self):
+        response = (False, "Incorrect reply format")
+        self.client._post = MagicMock(return_value=response)
+
+        self.assertRaises(InvalidGraderReply,
+                          self.client.put_result,
+                          DUMMY_SUBMISSION,
+                          DUMMY_GRADER_RESPONSE)
 
     def test__get(self):
         xreply = {"return_code": 0, "content": "success"}
