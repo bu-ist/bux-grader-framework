@@ -135,6 +135,38 @@ class TestXQueueClient(unittest.TestCase):
 
         self.assertRaises(BadQueueName, self.client.get_queuelen, "bar")
 
+    def test_get_submission(self):
+        submission = {
+            "xqueue_header": json.dumps({
+                "submission_id": "123",
+                "submission_key": "abc"
+                }),
+            "xqueue_body": json.dumps({
+                "student_info": "",
+                "student_response": "",
+                "grader_payload": ""
+            }),
+            "xqueue_files": json.dumps({})
+        }
+        response = (True, json.dumps(submission))
+        self.client._get = MagicMock(return_value=response)
+
+        self.assertEquals(submission, self.client.get_submission("foo"))
+
+        self.client._get.assert_called_with(
+            XQUEUE_TEST_CONFIG["url"] + "/xqueue/get_submission/",
+            {"queue_name": "foo"}
+            )
+
+    def test_get_submission_invalid_queue_name(self):
+        xqueue_response = {"return_code": 1, "content": "Valid queue names "
+                           "are: certificates, edX-Open_DemoX, open-ended, "
+                           "test-pull"}
+        response = MagicMock(spec=requests.Response())
+        response.content = json.dumps(xqueue_response)
+        self.client.session.get = MagicMock(return_value=response)
+
+        self.assertRaises(BadQueueName, self.client.get_submission, "bar")
 
 if __name__ == '__main__':
     unittest.main()

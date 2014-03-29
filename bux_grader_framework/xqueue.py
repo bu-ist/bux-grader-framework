@@ -127,7 +127,20 @@ class XQueueClient(object):
             Returns a submission :class:`dict` or :class:`None`.
 
         """
-        pass
+        log.debug("Fetching submission from \"{}\"".format(queue_name))
+        url = urlparse.urljoin(self.url, "/xqueue/get_submission/")
+        params = {"queue_name": queue_name}
+
+        success, content = self._get(url, params)
+        if not success:
+            log.error("Could not get submission: {}".format(content))
+            raise BadQueueName(content)
+
+        submission = json.loads(content)
+        log.debug("Retrieved submission from \"{}\": {}".format(queue_name,
+                                                                submission))
+
+        return submission
 
     def put_result(self, result):
         """ Posts a result to XQueue.
@@ -152,6 +165,24 @@ class XQueueClient(object):
                 accept the response.
         """
         pass
+
+    def _get(self, url, params, retry_login=True):
+        """ Helper method for XQueue get requests
+
+        Will automatically login if requested
+
+        """
+        # TODO: Handle connection error / timeouts
+        response = self.session.get(url, params=params)
+
+        success, content = self._parse_xreply(response.content)
+        if not success:
+            if "login_required" == content and retry_login:
+                log.debug("Login required, attempting login")
+                self.login()
+                return self._http_get(url, params, False)
+
+        return success, content
 
     def _validate_response(self, reply):
         """ Check the format of the response :class:`dict`.
