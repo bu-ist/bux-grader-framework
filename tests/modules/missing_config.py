@@ -1,6 +1,6 @@
-# Valid configuration
+# Invalid configuration
 #
-# Loads the DummyEvaluator class
+# Missing EVALUATOR_MODULES
 
 XQUEUE_INTERFACE = {
     "queue": "test_queue",
@@ -12,7 +12,3 @@ XQUEUE_INTERFACE = {
 }
 
 ignoreme = "test"
-
-EVALUATOR_MODULES = {
-    'evaluators.dummy'
-}

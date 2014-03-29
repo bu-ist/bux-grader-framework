@@ -1,6 +1,6 @@
-# Valid configuration
+# Invalid configuration
 #
-# Loads the DummyEvaluator class
+# Contains an unknown EVALUATOR_MODULE
 
 XQUEUE_INTERFACE = {
     "queue": "test_queue",
@@ -14,5 +14,5 @@ XQUEUE_INTERFACE = {
 ignoreme = "test"
 
 EVALUATOR_MODULES = {
-    'evaluators.dummy'
+    'foobar'
 }

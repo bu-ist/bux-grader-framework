@@ -21,6 +21,7 @@ Evaluator
 ---------
 .. autoclass:: bux_grader_framework.BaseEvaluator
    :members:
+.. autofunction:: bux_grader_framework.registered_evaluators
 
 Workers
 -------
@@ -35,8 +36,17 @@ XQueue
 .. autoclass:: bux_grader_framework.XQueueClient
    :members:
 
+Utility
+-------
+
+.. autofunction:: bux_grader_framework.util.class_imported_from
+
 Exceptions
 ----------
+
+Grader
+^^^^^^
+.. autoexception:: bux_grader_framework.exceptions.ImproperlyConfiguredGrader
 
 XQueue
 ^^^^^^

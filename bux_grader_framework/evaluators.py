@@ -48,3 +48,8 @@ class BaseEvaluator(object):
             the response.
         """
         pass
+
+
+def registered_evaluators():
+    """ Returns all subclasses of :class:`BaseEvaluator` """
+    return BaseEvaluator.__subclasses__()

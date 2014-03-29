@@ -5,7 +5,15 @@
     This module implements the central grader object.
 """
 
+import importlib
+import logging
+
 from .conf import Config
+from .evaluators import registered_evaluators
+from .exceptions import ImproperlyConfiguredGrader
+from .util import class_imported_from
+
+log = logging.getLogger(__name__)
 
 
 class Grader(object):
@@ -23,6 +31,7 @@ class Grader(object):
     def __init__(self):
 
         self._config = None
+        self._evaluators = None
 
     def run(self):
         """ Starts the grader daemon
@@ -53,9 +62,43 @@ class Grader(object):
 
     @property
     def evaluators(self):
-        """ Registry of :class:`BaseEvaluator` classes. """
-        pass
+        """ Registry of ``EVALUATOR_MODULES``
+
+            :raises ImproperlyConfiguredGrader: if ``EVALUATOR_MODULES`` can
+                                                not be imported properly
+        """
+        if self._evaluators is None:
+            self._evaluators = self._load_evaluators()
+        return self._evaluators
 
     def _load_evaluators(self):
         """ Loads all evaluators. """
-        pass
+
+        # Fail if no evaluators are defined
+        if "EVALUATOR_MODULES" not in self.config:
+            raise ImproperlyConfiguredGrader("No evaluators loaded. "
+                                             "Have you set EVALUATOR_MODULES?")
+
+        # Import configured evaluator modules
+        modules = self.config["EVALUATOR_MODULES"]
+        for mod in modules:
+            try:
+                importlib.import_module(mod)
+            except ImportError:
+                raise ImproperlyConfiguredGrader("Could not load evaluator "
+                                                 "module: {}".format(mod))
+
+        # Fetch evaluators registered by EVALUATOR_MODULES imports
+        evaluator_classes = registered_evaluators()
+
+        # Filter out classes that were not imported from EVALUATOR_MODULES
+        evaluators = [cls for cls in evaluator_classes
+                      if class_imported_from(cls, modules)]
+
+        if not evaluators:
+            evaluator_list = ", ".join(self.config["EVALUATOR_MODULES"])
+            raise ImproperlyConfiguredGrader("No evaluators found in listed "
+                                             "EVALUATOR_MODULES: {}"
+                                             .format(evaluator_list))
+
+        return evaluators

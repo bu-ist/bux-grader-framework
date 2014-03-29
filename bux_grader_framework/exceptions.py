@@ -7,7 +7,7 @@
 
 
 class ImproperlyConfiguredGrader(Exception):
-    """ A :class:`BaseGrader` subclass was improperly configured """
+    """ A :class:`Grader` instance was improperly configured """
     pass
 
 
