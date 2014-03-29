@@ -134,16 +134,22 @@ class TestXQueueClient(unittest.TestCase):
             )
 
     def test_get_submission_invalid_queue_name(self):
-        xqueue_response = {"return_code": 1, "content": "Valid queue names "
-                           "are: certificates, edX-Open_DemoX, open-ended, "
-                           "test-pull"}
+        xqueue_response = {"return_code": 1,
+                           "content": "Queue 'bar' not found"}
         response = MagicMock(spec=requests.Response())
         response.content = json.dumps(xqueue_response)
         self.client.session.get = MagicMock(return_value=response)
 
         self.assertRaises(BadQueueName, self.client.get_submission, "bar")
 
-    # TODO: Mock known XQueue responses
+    def test_get_submission_empty_queue(self):
+        xqueue_response = {"return_code": 1,
+                           "content": "Queue 'foo' is empty"}
+        response = MagicMock(spec=requests.Response())
+        response.content = json.dumps(xqueue_response)
+        self.client.session.get = MagicMock(return_value=response)
+
+        self.assertEquals(None, self.client.get_submission("foo"))
 
     def test_put_reply(self):
         response = (True, "")

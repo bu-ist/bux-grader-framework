@@ -11,8 +11,8 @@ import urlparse
 
 import requests
 
-from .exceptions import (BadCredentials, BadQueueName,
-                         InvalidXRequest, InvalidGraderReply)
+from .exceptions import (BadCredentials, BadQueueName, InvalidXRequest,
+                         InvalidRequest, InvalidGraderReply)
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,9 @@ class XQueueClient(object):
             True
 
     """
+    QUEUE_NOT_FOUND_MSG = "Queue '%s' not found"
+    EMPTY_QUEUE_MSG = "Queue '%s' is empty"
+
     def __init__(self, url, username, password, timeout=10):
         self.url = url
         self.username = username
@@ -102,9 +105,11 @@ class XQueueClient(object):
 
         success, content = self._get(url, params)
         if not success:
-            log.error("Could not get queue length, invalid queue name: {}."
-                      "{}".format(queue_name, content))
-            raise BadQueueName(content)
+            error_msg = "Could not get queue length: {}".format(content)
+            if content.startswith("Valid queue names are"):
+                raise BadQueueName(error_msg)
+            else:
+                raise InvalidRequest(error_msg)
 
         queuelen = int(content)
         log.debug("Retrieved queue length for \"{}\": {}".format(queue_name,
@@ -127,8 +132,13 @@ class XQueueClient(object):
 
         success, content = self._get(url, params)
         if not success:
-            log.error("Could not get submission: {}".format(content))
-            raise BadQueueName(content)
+            error_msg = "Could not get submission: {}".format(content)
+            if self.QUEUE_NOT_FOUND_MSG % queue_name == content:
+                raise BadQueueName(error_msg)
+            elif self.EMPTY_QUEUE_MSG % queue_name == content:
+                return None
+            else:
+                raise InvalidRequest(error_msg)
 
         # Convert response string to dicts
         submission = json.loads(content)
