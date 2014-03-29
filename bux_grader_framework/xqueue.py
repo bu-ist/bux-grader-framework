@@ -11,7 +11,7 @@ import urlparse
 
 import requests
 
-from .exceptions import BadCredentials
+from .exceptions import BadCredentials, BadQueueName
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +95,27 @@ class XQueueClient(object):
                      is invalid
 
         """
-        pass
+        log.debug("Fetching queue length for \"{}\"".format(queue_name))
+        url = urlparse.urljoin(self.url, "/xqueue/get_queuelen/")
+        params = {"queue_name": queue_name}
+
+        # TODO: Handle connection error / timeouts
+        response = self.session.get(url, params=params)
+
+        success, content = self._parse_xreply(response.content)
+        if not success:
+            if "login_required" == content:
+                log.debug("Login required, attempting login")
+                self.login()
+                return self.get_queuelen(queue_name)
+            else:
+                log.error("Could not get queue length, invalid queue name: {}."
+                          "{}".format(queue_name, content))
+                raise BadQueueName(content)
+
+        log.debug("Retrieved queue length for \"{}\": {}".format(queue_name,
+                                                                 content))
+        return content
 
     def get_submission(self, queue_name):
         """ Pop a submission off of XQueue.
