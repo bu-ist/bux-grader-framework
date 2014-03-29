@@ -11,7 +11,7 @@
 __version__ = '0.1.0'
 
 from .conf import Config
-from .evaluators import BaseEvaluator
+from .evaluators import registered_evaluators, BaseEvaluator
 from .grader import Grader
 from .workers import EvaluatorWorker, XQueueWorker
 from .xqueue import XQueueClient
