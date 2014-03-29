@@ -58,31 +58,6 @@ class TestXQueueClient(unittest.TestCase):
 
         self.assertRaises(BadCredentials, self.client.login)
 
-    def test_parse_xreply(self):
-        xreply = json.dumps({"return_code": 0, "content": "Test content"})
-        self.assertEquals((True, "Test content"),
-                          self.client._parse_xreply(xreply))
-
-    def test_parse_xreply_missing_content(self):
-        xreply = json.dumps({"return_code": 1})
-        self.assertRaises(InvalidXReply,
-                          self.client._parse_xreply, xreply)
-
-    def test_parse_xreply_not_dict(self):
-        xreply = json.dumps(['not', 'dict'])
-        self.assertRaises(InvalidXReply,
-                          self.client._parse_xreply, xreply)
-
-    def test_parse_xreply_not_json(self):
-        xreply = {"return_code": 1, "content": "Not JSON string"}
-        self.assertRaises(InvalidXReply,
-                          self.client._parse_xreply, xreply)
-
-    def test_parse_xreply_empty(self):
-        xreply = ""
-        self.assertRaises(InvalidXReply,
-                          self.client._parse_xreply, xreply)
-
     def test_get_queuelen(self):
         response = (True, "2")
         self.client._get = MagicMock(return_value=response)
@@ -172,6 +147,31 @@ class TestXQueueClient(unittest.TestCase):
 
         self.assertRaises(BadCredentials, self.client._get,
                           "http://example.com")
+
+    def test__parse_xreply(self):
+        xreply = json.dumps({"return_code": 0, "content": "Test content"})
+        self.assertEquals((True, "Test content"),
+                          self.client._parse_xreply(xreply))
+
+    def test__parse_xreply_missing_content(self):
+        xreply = json.dumps({"return_code": 1})
+        self.assertRaises(InvalidXReply,
+                          self.client._parse_xreply, xreply)
+
+    def test__parse_xreply_not_dict(self):
+        xreply = json.dumps(['not', 'dict'])
+        self.assertRaises(InvalidXReply,
+                          self.client._parse_xreply, xreply)
+
+    def test__parse_xreply_not_json(self):
+        xreply = {"return_code": 1, "content": "Not JSON string"}
+        self.assertRaises(InvalidXReply,
+                          self.client._parse_xreply, xreply)
+
+    def test__parse_xreply_empty(self):
+        xreply = ""
+        self.assertRaises(InvalidXReply,
+                          self.client._parse_xreply, xreply)
 
 if __name__ == '__main__':
     unittest.main()
