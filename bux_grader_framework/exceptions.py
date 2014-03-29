@@ -32,5 +32,5 @@ class BadCredentials(XQueueException):
 
 
 class InvalidReply(XQueueException):
-    """ An invalid username or password was used """
+    """ An invalid grader response """
     pass

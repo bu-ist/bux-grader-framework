@@ -13,9 +13,7 @@ class XQueueClient(object):
 
         Establishes an HTTP session used in subsequent requests.
 
-        :param str queue: An existing XQueue queue name
-        :param str host: XQueue host name or IP
-        :param int port: XQueue port number
+        :param str url: XQueue URL
         :param str username: Django auth user
         :param str password: Django auth password
         :param int timeout: Maximum time to wait for XQueue to respond
@@ -24,41 +22,54 @@ class XQueueClient(object):
                                seconds
         :raises BadCredentials: if the supplied ``username`` or ``password``
                                 are invalid
-        :raises BadQueueName: if the supplied ``queue`` name is invalid
-        :raises InvalidXQueueReply: if reply :class:`dict` posted to XQueue is
-                                    improperly formatted
 
         All XQueue-related exceptions extend :class:`XQueueException`.
 
         Usage::
 
             >>> from bux_grader_framework import XQueueClient
-            >>> xqueue = XQueueClient('demo', 'localhost', 18040, 'lms', 'password')
-            >>> xqueue.get_queuelen()
+            >>> xqueue = XQueueClient('http://localhost:18040', 'lms',
+             'password')
+            >>> xqueue.get_queuelen('test_queue')
             1
-            >>> xqueue.get_submission()
+            >>> xqueue.get_submission('test_queue')
             {'xqueue_header': ... , 'xqueue_body': ... , 'xqueue_files': ...}
             >>> # Handle submission
-            >>> response = {'correct': True, 'score': 1, 'msg': '<p>Correct!</p>'}
+            >>> response = {
+            ...     'correct': True,
+            ...     'score': 1,
+            ...     'msg': '<p>Correct!</p>'
+            ... }
             >>> xqueue.put_result(response)
             True
 
     """
-    def __init__(self, queue, host, port, username, password, timeout=10):
+    def __init__(self, url, username, password, timeout=10):
         pass
 
     def login(self):
         """ Login to XQueue."""
         pass
 
-    def get_queuelen(self):
-        """ Returns the current queue length."""
+    def get_queuelen(self, queue_name):
+        """ Returns the current queue length.
+
+            :param str queue_name: an existing XQueue queue name
+            :raises: :class:`BadQueueName` if the supplied ``queue_name``
+                     is invalid
+
+        """
         pass
 
-    def get_submission(self):
+    def get_submission(self, queue_name):
         """ Pop a submission off of XQueue.
 
-        Returns a submission :class:`dict` or :class:`None`.
+            :param str queue_name: an existing XQueue queue name
+            :raises: :class:`BadQueueName` if the supplied ``queue_name``
+                     is invalid
+
+            Returns a submission :class:`dict` or :class:`None`.
+
         """
         pass
 
@@ -66,7 +77,10 @@ class XQueueClient(object):
         """ Posts a result to XQueue.
 
             :param dict result: A response :class:`dict`
-            :return: True or False
+            :return: ``True`` or ``False``
+
+            :raises: :class:`InvalidXQueueReply` if reply :class:`dict`
+                     posted to XQueue is improperly formatted
 
             The response :class:`dict` should be formatted as follows::
 
