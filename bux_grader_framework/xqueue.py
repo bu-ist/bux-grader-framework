@@ -5,6 +5,21 @@
     This module defines the XQueue REST client.
 """
 
+import json
+import logging
+import urlparse
+
+import requests
+
+from .exceptions import BadCredentials
+
+log = logging.getLogger(__name__)
+
+
+class InvalidXReply(Exception):
+    """ Used internally to indicate malformed XQueue reply string """
+    pass
+
 
 class XQueueClient(object):
     """ A XQueue REST client.
@@ -45,11 +60,32 @@ class XQueueClient(object):
 
     """
     def __init__(self, url, username, password, timeout=10):
-        pass
+        self.url = url
+        self.username = username
+        self.password = password
+        self.timeout = timeout
+
+        self.session = requests.session()
 
     def login(self):
         """ Login to XQueue."""
-        pass
+        url = urlparse.urljoin(self.url, "/xqueue/login/")
+        data = {"username": self.username, "password": self.password}
+
+        # TODO: Handle connection error / timeouts
+        response = self.session.post(url, data=data)
+
+        if not response.ok:
+            log.critical("Unable to login to XQueue: {}".format(response.text))
+            raise BadCredentials(response.text)
+
+        success, content = self._parse_xreply(response.content)
+        if not success:
+            log.critical("Unable to login to XQueue: {}".format(content))
+            raise BadCredentials(content)
+
+        log.debug("Succesfully logged in as {}".format(self.username))
+        return success
 
     def get_queuelen(self, queue_name):
         """ Returns the current queue length.
@@ -115,4 +151,17 @@ class XQueueClient(object):
                { 'return_code': 0(success)/1(error),
                  'content'    : 'my content', }
         """
-        pass
+        try:
+            xreply = json.loads(reply)
+        except (TypeError, ValueError):
+            raise InvalidXReply
+
+        if not isinstance(xreply, dict):
+            raise InvalidXReply
+
+        for key in ['return_code', 'content']:
+            if key not in xreply:
+                raise InvalidXReply
+
+        success = xreply['return_code'] == 0
+        return success, xreply['content']
