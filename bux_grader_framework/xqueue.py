@@ -11,7 +11,7 @@ import urlparse
 
 import requests
 
-from .exceptions import BadCredentials, BadQueueName
+from .exceptions import BadCredentials, BadQueueName, InvalidXRequest
 
 log = logging.getLogger(__name__)
 
@@ -129,11 +129,21 @@ class XQueueClient(object):
             log.error("Could not get submission: {}".format(content))
             raise BadQueueName(content)
 
+        # Convert response string to dicts
         submission = json.loads(content)
+        try:
+            header, body, files = self._parse_xrequest(submission)
+        except InvalidXRequest:
+            log.exception("Malformed submission received from XQueue: {}"
+                          .format(submission))
+            raise
+
         log.debug("Retrieved submission from \"{}\": {}".format(queue_name,
                                                                 submission))
 
-        return submission
+        return {"xqueue_header": header,
+                "xqueue_body": body,
+                "xqueue_files": files}
 
     def put_result(self, result):
         """ Posts a result to XQueue.
@@ -177,16 +187,60 @@ class XQueueClient(object):
 
         return success, content
 
-    def _validate_response(self, reply):
-        """ Check the format of the response :class:`dict`.
+    def _parse_xrequest(self, reply):
+        """ Check the format of an XQueue request :class:`dict`.
 
-            XQueue checks the reply to assert:
+            :param dict reply: response body from xqueue
+            :return: (xqueue_header dict, xqueue_body dict, xqueue_files dict)
+            :rtype: tuple
 
-            1. Presence of ``xqueue_header`` and ``xqueue_body``
-            2. Presence of specific metadata in ``xqueue_header``
-               (``submission_id``, ``submission_key``)
+            Ensures that XQueue request content consists of:
+
+            1. ``xqueue_header``, ``xqueue_body`` and ``xqueue_files`` dicts
+            2. ``submission_id`` and ``submission_key`` in ``xqueue_header``
+            2. ``student_info`` and ``grader_payload`` in ``xqueue_body``
+
+            Response dicts have json decoded all non-string values.
+
         """
-        pass
+        try:
+            header = reply['xqueue_header']
+            body = reply['xqueue_body']
+            files = reply['xqueue_files']
+        except KeyError:
+            raise InvalidXRequest
+
+        try:
+            header_dict = json.loads(header)
+            body_dict = json.loads(body)
+            files_dict = json.loads(files)
+        except (TypeError, ValueError):
+            raise InvalidXRequest
+
+        if not isinstance(header_dict, dict):
+            raise InvalidXRequest
+
+        for header_key in ['submission_id', 'submission_key']:
+            if header_key not in header_dict:
+                raise InvalidXRequest
+
+        if not isinstance(body_dict, dict):
+            raise InvalidXRequest
+
+        for body_key in ['student_info', 'grader_payload', 'student_response']:
+            if body_key not in body_dict:
+                raise InvalidXRequest
+
+        try:
+            student_info = json.loads(body_dict['student_info'])
+            grader_payload = json.loads(body_dict['grader_payload'])
+        except (TypeError, ValueError):
+            raise InvalidXRequest
+
+        body_dict['student_info'] = student_info
+        body_dict['grader_payload'] = grader_payload
+
+        return header_dict, body_dict, files_dict
 
     def _parse_xreply(self, reply):
         """ XQueue reply format:
@@ -194,6 +248,7 @@ class XQueueClient(object):
             JSON-serialized :class:`dict`:
                { 'return_code': 0(success)/1(error),
                  'content'    : 'my content', }
+
         """
         try:
             xreply = json.loads(reply)

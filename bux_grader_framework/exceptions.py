@@ -31,6 +31,6 @@ class BadCredentials(XQueueException):
     pass
 
 
-class InvalidReply(XQueueException):
-    """ An invalid grader response """
+class InvalidXRequest(XQueueException):
+    """ An invalid XQueue request object """
     pass

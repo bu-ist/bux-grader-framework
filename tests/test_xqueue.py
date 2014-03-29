@@ -5,7 +5,8 @@ import requests
 from mock import MagicMock, patch
 
 from bux_grader_framework.xqueue import XQueueClient, InvalidXReply
-from bux_grader_framework.exceptions import BadCredentials, BadQueueName
+from bux_grader_framework.exceptions import (BadCredentials, BadQueueName,
+                                             InvalidXRequest)
 
 XQUEUE_TEST_CONFIG = {
     "url": "http://localhost:18040",
@@ -13,6 +14,36 @@ XQUEUE_TEST_CONFIG = {
     "password": "passwd",
     "timeout": 10
 }
+
+DUMMY_XREQUEST = {
+    u"xqueue_header": {
+        u"submission_id": u"123",
+        u"submission_key": u"532bf863b9cb0a57313ab2f473196a27"
+        },
+    u"xqueue_body": {
+        u"student_info": {
+            u"anonymous_student_id": u"a87ff679a2f3e71d9181a67b7542122c",
+            u"submission_time": u"20140329192521"
+        },
+        u"student_response": u"Test 1 2 3",
+        u"grader_payload": {}
+    },
+    u"xqueue_files": {}
+}
+
+DUMMY_XREQUEST_ENCODED = json.dumps({
+    "xqueue_header": json.dumps(DUMMY_XREQUEST["xqueue_header"]),
+    "xqueue_body": json.dumps({
+        "student_response": DUMMY_XREQUEST["xqueue_body"]["student_response"],
+        "student_info": json.dumps(
+            DUMMY_XREQUEST["xqueue_body"]["student_info"]
+            ),
+        "grader_payload": json.dumps(
+            DUMMY_XREQUEST["xqueue_body"]["grader_payload"]
+            ),
+    }),
+    "xqueue_files": json.dumps(DUMMY_XREQUEST["xqueue_files"])
+})
 
 
 class TestXQueueClient(unittest.TestCase):
@@ -77,22 +108,10 @@ class TestXQueueClient(unittest.TestCase):
         self.assertRaises(BadQueueName, self.client.get_queuelen, "bar")
 
     def test_get_submission(self):
-        submission = {
-            "xqueue_header": json.dumps({
-                "submission_id": "123",
-                "submission_key": "abc"
-                }),
-            "xqueue_body": json.dumps({
-                "student_info": "",
-                "student_response": "",
-                "grader_payload": ""
-            }),
-            "xqueue_files": json.dumps({})
-        }
-        response = (True, json.dumps(submission))
+        response = (True, DUMMY_XREQUEST_ENCODED)
         self.client._get = MagicMock(return_value=response)
 
-        self.assertEquals(submission, self.client.get_submission("foo"))
+        self.assertEquals(DUMMY_XREQUEST, self.client.get_submission("foo"))
 
         self.client._get.assert_called_with(
             XQUEUE_TEST_CONFIG["url"] + "/xqueue/get_submission/",
@@ -172,6 +191,47 @@ class TestXQueueClient(unittest.TestCase):
         xreply = ""
         self.assertRaises(InvalidXReply,
                           self.client._parse_xreply, xreply)
+
+    def test__parse_xrequest(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        response = (DUMMY_XREQUEST["xqueue_header"],
+                    DUMMY_XREQUEST["xqueue_body"],
+                    DUMMY_XREQUEST["xqueue_files"])
+        self.assertEquals(response,
+                          self.client._parse_xrequest(xrequest))
+
+    def test__parse_xrequest_header_not_dict(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        xrequest['xqueue_header'] = "[]"
+
+        self.assertRaises(InvalidXRequest,
+                          self.client._parse_xrequest, xrequest)
+
+    def test__parse_xrequest_body_not_dict(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        xrequest['xqueue_body'] = "[]"
+
+        self.assertRaises(InvalidXRequest,
+                          self.client._parse_xrequest, xrequest)
+
+    def test__parse_xrequest_missing_header_key(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        xheader = json.loads(xrequest["xqueue_header"])
+        del xheader["submission_id"]
+        xrequest["xqueue_header"] = json.dumps(xheader)
+
+        self.assertRaises(InvalidXRequest,
+                          self.client._parse_xrequest, xrequest)
+
+    def test__parse_xrequest_missing_body_key(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        xbody = json.loads(xrequest["xqueue_body"])
+        del xbody["grader_payload"]
+        xrequest["xqueue_body"] = json.dumps(xbody)
+
+        self.assertRaises(InvalidXRequest,
+                          self.client._parse_xrequest, xrequest)
+
 
 if __name__ == '__main__':
     unittest.main()
