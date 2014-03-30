@@ -10,9 +10,11 @@ import logging
 import urlparse
 
 import requests
+from requests.exceptions import Timeout, HTTPError, ConnectionError
 
-from .exceptions import (BadCredentials, BadQueueName, InvalidXRequest,
-                         InvalidRequest, InvalidGraderReply)
+from .exceptions import (XQueueException,
+                         BadCredentials, BadQueueName,
+                         InvalidXRequest, InvalidGraderReply)
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +62,7 @@ class XQueueClient(object):
             True
 
     """
+    INVALID_LOGIN_MSG = "Incorrect login credentials"
     QUEUE_NOT_FOUND_MSG = "Queue '%s' not found"
     EMPTY_QUEUE_MSG = "Queue '%s' is empty"
 
@@ -74,19 +77,16 @@ class XQueueClient(object):
     def login(self):
         """ Login to XQueue."""
         url = urlparse.urljoin(self.url, "/xqueue/login/")
-        data = {"username": self.username, "password": self.password}
+        post_data = {"username": self.username, "password": self.password}
 
-        # TODO: Handle connection error / timeouts
-        response = self.session.post(url, data=data)
-
-        if not response.ok:
-            log.critical("Unable to login to XQueue: {}".format(response.text))
-            raise BadCredentials(response.text)
-
-        success, content = self._parse_xreply(response.content)
+        success, content = self._request(url, 'post', data=post_data,
+                                         retry_login=False)
         if not success:
-            log.critical("Unable to login to XQueue: {}".format(content))
-            raise BadCredentials(content)
+            error_msg = "Unable to login to XQueue: {}".format(content)
+            if self.INVALID_LOGIN_MSG == content:
+                raise BadCredentials(error_msg)
+            else:
+                raise XQueueException(error_msg)
 
         log.debug("Succesfully logged in as {}".format(self.username))
         return success
@@ -103,13 +103,13 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_queuelen/")
         params = {"queue_name": queue_name}
 
-        success, content = self._get(url, params)
+        success, content = self._request(url, "get", params=params)
         if not success:
             error_msg = "Could not get queue length: {}".format(content)
             if content.startswith("Valid queue names are"):
                 raise BadQueueName(error_msg)
             else:
-                raise InvalidRequest(error_msg)
+                raise XQueueException(error_msg)
 
         queuelen = int(content)
         log.debug("Retrieved queue length for \"{}\": {}".format(queue_name,
@@ -130,7 +130,7 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_submission/")
         params = {"queue_name": queue_name}
 
-        success, content = self._get(url, params)
+        success, content = self._request(url, 'get', params=params)
         if not success:
             error_msg = "Could not get submission: {}".format(content)
             if self.QUEUE_NOT_FOUND_MSG % queue_name == content:
@@ -138,7 +138,7 @@ class XQueueClient(object):
             elif self.EMPTY_QUEUE_MSG % queue_name == content:
                 return None
             else:
-                raise InvalidRequest(error_msg)
+                raise XQueueException(error_msg)
 
         # Convert response string to dicts
         submission = json.loads(content)
@@ -151,7 +151,6 @@ class XQueueClient(object):
 
         log.debug("Retrieved submission from \"{}\": {}".format(queue_name,
                                                                 submission))
-
         return {"xqueue_header": header,
                 "xqueue_body": body,
                 "xqueue_files": files}
@@ -188,24 +187,30 @@ class XQueueClient(object):
             "xqueue_body": json.dumps(result)
         }
 
-        success, content = self._post(url, post_data)
+        success, content = self._request(url, 'post', data=post_data)
         if not success:
             log.error("Could not post result: {}".format(content))
             raise InvalidGraderReply(content)
 
         log.debug("Succesfully posted reply to XQueue.")
-
         return success
 
-    # TODO: Combine with _post
-    def _get(self, url, params=None, retry_login=True):
-        """ Helper method for XQueue get requests
+    def _request(self, url, method='get', params=None, data=None,
+                 retry_login=True):
+        """ Thin wrapper around ``requests.request``.
 
-        Will automatically login if requested
+        Fails gracefully and retries request after login when denied.
 
         """
-        # TODO: Handle connection error / timeouts
-        response = self.session.get(url, params=params)
+
+        try:
+            response = self.session.request(method, url, params=params,
+                                            data=data, timeout=self.timeout)
+        except Timeout:
+            return False, "XQueue request exceeded timeout of {}s".format(
+                          self.timeout)
+        except (ConnectionError, HTTPError) as e:
+            return False, "XQueue request failed: {}".format(str(e))
         log.debug("Raw XQueue response: {}".format(str(response)))
 
         success, content = self._parse_xreply(response.content)
@@ -213,27 +218,7 @@ class XQueueClient(object):
             if "login_required" == content and retry_login:
                 log.debug("Login required, attempting login")
                 self.login()
-                return self._get(url, params, False)
-
-        return success, content
-
-    # TODO: Combine with _get
-    def _post(self, url, data=None, retry_login=True):
-        """ Helper method for XQueue get requests
-
-        Will automatically login if requested
-
-        """
-        # TODO: Handle connection error / timeouts
-        response = self.session.post(url, data=data)
-        log.debug("Raw XQueue response: {}".format(str(response)))
-
-        success, content = self._parse_xreply(response.content)
-        if not success:
-            if "login_required" == content and retry_login:
-                log.debug("Login required, attempting login")
-                self.login()
-                return self._post(url, data, False)
+                return self._request(url, method, params, data, False)
 
         return success, content
 
@@ -313,5 +298,5 @@ class XQueueClient(object):
             if key not in xreply:
                 raise InvalidXReply
 
-        success = xreply['return_code'] == 0
+        success = (xreply['return_code'] == 0)
         return success, xreply['content']
