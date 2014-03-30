@@ -182,6 +182,7 @@ class XQueueClient(object):
         log.debug("Posting result to XQueue: {}".format(result))
         url = urlparse.urljoin(self.url, "/xqueue/put_result/")
 
+        # TODO: Add validation of submission, result dict
         post_data = {
             "xqueue_header": json.dumps(submission["xqueue_header"]),
             "xqueue_body": json.dumps(result)
@@ -192,7 +193,7 @@ class XQueueClient(object):
             log.error("Could not post result: {}".format(content))
             raise InvalidGraderReply(content)
 
-        log.debug("Succesfully posted reply to XQueue.")
+        log.debug("Succesfully posted result to XQueue.")
         return success
 
     def _request(self, url, method='get', params=None, data=None,
@@ -211,7 +212,7 @@ class XQueueClient(object):
                           self.timeout)
         except (ConnectionError, HTTPError) as e:
             return False, "XQueue request failed: {}".format(str(e))
-        log.debug("Raw XQueue response: {}".format(str(response)))
+        log.debug("Raw XQueue response: {}".format(response.text))
 
         success, content = self._parse_xreply(response.content)
         if not success:
@@ -223,10 +224,10 @@ class XQueueClient(object):
         return success, content
 
     # TODO: Break in to two functions -- one for validation, one for parsing
-    def _parse_xrequest(self, reply):
+    def _parse_xrequest(self, request):
         """ Check the format of an XQueue request :class:`dict`.
 
-            :param dict reply: response body from xqueue
+            :param dict request: response body from xqueue
             :return: (xqueue_header dict, xqueue_body dict, xqueue_files dict)
             :rtype: tuple
 
@@ -240,9 +241,9 @@ class XQueueClient(object):
 
         """
         try:
-            header = reply['xqueue_header']
-            body = reply['xqueue_body']
-            files = reply['xqueue_files']
+            header = request['xqueue_header']
+            body = request['xqueue_body']
+            files = request['xqueue_files']
         except KeyError:
             raise InvalidXRequest
 
