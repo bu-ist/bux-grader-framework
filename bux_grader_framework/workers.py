@@ -9,16 +9,17 @@
 class EvaluatorWorker(object):
     """ Evaluates submissions pulled from the internal work queue.
 
+        :param str evaluator_name: a evaluator name to handle submissions
+        :param Grader grader: a configured grader instance
+
         If the evaluation is successful, the result is posted to XQueue.
 
         If the grader is unable to process the submission the submission is
         requeued.
 
-        :param evaluator: a :class:`BaseEvaluator` subclass to use for problem
-                          evaluations.
     """
-    def __init__(self, evaluator):
-        self.evaluator = evaluator
+    def __init__(self, evaluator_name, grader):
+        pass
 
     def run(self):
         """ Polls submission queue. """
@@ -28,6 +29,7 @@ class EvaluatorWorker(object):
         """ Handles a submission popped off the internal work queue.
 
         Invokes ``self.evaluator.evalute()`` to generate a response.
+
         """
         pass
 
@@ -35,13 +37,14 @@ class EvaluatorWorker(object):
 class XQueueWorker(object):
     """ Polls XQueue for submissions.
 
-        :param XQueueClient xqueue: a xqueue REST client
+        :param str queue_name: XQueue queue name
+        :param Grader grader: a configured grader instance
 
         Submissions pulled down from XQueue are transferred to an internal work
         queue for evaluation by an :class:`EvaluatorWorker`.
     """
 
-    def __init__(self, grader):
+    def __init__(self, queue_name, grader):
         pass
 
     def poll_for_submissions(self):

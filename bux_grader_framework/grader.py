@@ -53,6 +53,32 @@ class Grader(object):
         """
         return self.config.from_module(modulename)
 
+    def xqueue(self):
+        """ Returns a fresh :class:`XQueueClient` instance configured for this grader.
+
+            >>> xqueue = grader.xqueue()
+            >>> submission = xqueue.get_submission('test_queue')
+            >>> result = {"correct": True, "score": 1, "msg": "<p>Right!</p>"}
+            >>> xqueue.put_result('test_queue', submission, result)
+
+        """
+        pass
+
+    def work_queue(self):
+        """ Returns a fresh :class:`WorkQueue` instance configured for this grader.
+
+            >>> work_queue = grader.work_queue()
+            >>> work_queue.get('test_queue')
+            >>> work_queue.put('test_queue', 'message')
+            >>> work_queue.consume('test_queue')
+
+        """
+        pass
+
+    def evaluator(self, name):
+        """ Returns an evaluator class by name """
+        pass
+
     @property
     def config(self):
         """ Holds the grader :class:`Config` object. """
