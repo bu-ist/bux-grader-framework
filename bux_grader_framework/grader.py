@@ -7,9 +7,11 @@
 
 import importlib
 import logging
+import time
 
 from .conf import Config
 from .evaluators import registered_evaluators
+from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader
 from .util import class_imported_from
 
@@ -51,11 +53,52 @@ class Grader(object):
         2. Starts a :class:`EvaluatorWorker` process for each evaluator
         3. Enters a monitoring loop to check on each process
         """
-        pass
+        self.workers = []
+
+        # Create the XQueue worker
+        log.info("Creating XQueue worker process...")
+        xqueue_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
+        self.workers.append(xqueue_worker)
+
+        # Create an evaluator worker for each registered evaluator
+        log.info("Creating evaluator worker processes...")
+        for evaluator in self.evaluators:
+            for num in range(self.config['WORKER_COUNT']):
+                worker = EvaluatorWorker(evaluator, self)
+                self.workers.append(worker)
+
+        # Start all workers
+        for worker in self.workers:
+            log.info("Starting worker: %s", worker.name)
+            worker.start()
+
+        try:
+            while self.workers:
+                self.monitor()
+                time.sleep(self.config['MONITOR_INTERVAL'])
+        except (KeyboardInterrupt, SystemExit):
+            self.stop()
+
+        log.info("All workers removed, stopping...")
 
     def monitor(self):
         """ Monitors grader processes """
-        pass
+        for worker in self.workers:
+            if worker.exitcode is None:
+                continue
+            else:
+                log.error("Worker stopped unexpectedly: %s", worker)
+                # TODO: Restart
+                worker.close()
+                self.workers.remove(worker)
+
+    def stop(self):
+        """ Shuts down all worker processes """
+        log.info("Shutting down worker processes: %s", self.workers)
+        for worker in self.workers:
+            worker.close()
+            worker.join()
+        log.info("All workers stopped")
 
     def config_from_module(self, modulename):
         """ Loads grader configuration from a Python module.

@@ -5,36 +5,14 @@
     This module defines worker processes for handling submissions.
 """
 
+import logging
+import multiprocessing
+import time
 
-class EvaluatorWorker(object):
-    """ Evaluates submissions pulled from the internal work queue.
-
-        :param str evaluator_name: a evaluator name to handle submissions
-        :param Grader grader: a configured grader instance
-
-        If the evaluation is successful, the result is posted to XQueue.
-
-        If the grader is unable to process the submission the submission is
-        requeued.
-
-    """
-    def __init__(self, evaluator_name, grader):
-        pass
-
-    def run(self):
-        """ Polls submission queue. """
-        pass
-
-    def handle_submission(self, submission):
-        """ Handles a submission popped off the internal work queue.
-
-        Invokes ``self.evaluator.evalute()`` to generate a response.
-
-        """
-        pass
+log = logging.getLogger(__name__)
 
 
-class XQueueWorker(object):
+class XQueueWorker(multiprocessing.Process):
     """ Polls XQueue for submissions.
 
         :param str queue_name: XQueue queue name
@@ -45,12 +23,79 @@ class XQueueWorker(object):
     """
 
     def __init__(self, queue_name, grader):
-        pass
+        super(XQueueWorker, self).__init__()
 
-    def poll_for_submissions(self):
+        self.queue_name = queue_name
+        self.grader = grader
+
+        self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
+        self._is_running = False
+
+    def run(self):
         """ Polls XQueue for submissions. """
-        pass
+        log.info("[%s] XQueue worker (PID=%s) is polling for submissions...",
+                 self.name, self.pid)
+        self._is_running = True
+        try:
+            while self._is_running:
+                time.sleep(self._poll_interval)
+        except (KeyboardInterrupt, SystemExit):
+            # Grader manages worker shutdown
+            pass
 
     def enqueue_submission(self, submission):
         """ Adds a submision popped from XQueue to an internal work queue. """
         pass
+
+    def close(self):
+        """ Gracefully shuts down worker process """
+        log.info("[%s] Closing...", self.name)
+        self._is_running = False
+
+
+class EvaluatorWorker(multiprocessing.Process):
+    """ Evaluates submissions pulled from the internal work queue.
+
+        :param evaluator: a :class:`BaseEvaluator` subclass for handling
+                          submissions
+        :param Grader grader: a configured grader instance
+
+        If the evaluation is successful, the result is posted to XQueue.
+
+        If the grader is unable to process the submission the submission is
+        requeued.
+
+    """
+    def __init__(self, evaluator, grader):
+        super(EvaluatorWorker, self).__init__()
+
+        self.evaluator = evaluator()
+        self.grader = grader
+
+        self._is_running = False
+
+    def run(self):
+        """ Polls submission queue. """
+        log.info("[%s] '%s' evaluator (PID=%s) awaiting submissions...",
+                 self.name, self.evaluator.name, self.pid)
+        self._is_running = True
+        try:
+            while self._is_running:
+                # This will be handled by RabbitMQ consume method
+                time.sleep(1)
+        except (KeyboardInterrupt, SystemExit):
+            # Grader manages worker shutdown
+            pass
+
+    def handle_submission(self, submission):
+        """ Handles a submission popped off the internal work queue.
+
+        Invokes ``self.evaluator.evalute()`` to generate a response.
+
+        """
+        pass
+
+    def close(self):
+        """ Gracefully shuts down worker process """
+        log.info("[%s] Closing...", self.name)
+        self._is_running = False
