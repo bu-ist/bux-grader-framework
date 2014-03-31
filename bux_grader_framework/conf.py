@@ -13,6 +13,12 @@ log = logging.getLogger(__name__)
 
 class Config(dict):
     """ A thin :class:`dict` wrapper customized for grader configuration. """
+    def __init__(self, defaults={}):
+        super(Config, self).__init__()
+
+        # Set default attributes
+        for key in defaults:
+            self[key] = defaults[key]
 
     def from_module(self, modulename):
         """ Load configuration from a Python module.

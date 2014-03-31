@@ -28,6 +28,17 @@ class Grader(object):
     #: Defaults to :class:`Config`
     config_class = Config
 
+    default_config = {
+        "XQUEUE_QUEUE": "",
+        "XQUEUE_URL": "http://localhost:18040",
+        "XQUEUE_USER": "lms",
+        "XQUEUE_PASSWORD": "password",
+        "XQUEUE_TIMEOUT": 10,
+        "XQUEUE_POLL_INTERVAL": 1,
+        "WORKER_COUNT": 2,
+        "MONITOR_INTERVAL": 1
+    }
+
     def __init__(self):
 
         self._config = None
@@ -83,7 +94,7 @@ class Grader(object):
     def config(self):
         """ Holds the grader :class:`Config` object. """
         if self._config is None:
-            self._config = self.config_class()
+            self._config = self.config_class(self.default_config)
         return self._config
 
     @property
