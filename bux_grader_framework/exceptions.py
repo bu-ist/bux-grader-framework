@@ -31,6 +31,16 @@ class BadCredentials(XQueueException):
     pass
 
 
-class InvalidReply(XQueueException):
-    """ An invalid username or password was used """
+class InvalidRequest(XQueueException):
+    """ XQueue was unable to process the request """
+    pass
+
+
+class InvalidGraderReply(XQueueException):
+    """ XQueue was unable to process the grader reply """
+    pass
+
+
+class InvalidXRequest(XQueueException):
+    """ An invalid XQueue request was sent or received """
     pass
