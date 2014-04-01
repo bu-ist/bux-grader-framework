@@ -1,3 +1,10 @@
+"""
+    bux_grader_framework.queues
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    This module defines work queues utilized by the evalutator workers.
+"""
+
 import json
 import logging
 import time
