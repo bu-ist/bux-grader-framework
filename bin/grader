@@ -21,15 +21,21 @@ if __name__ == "__main__":
                         help='Path to add to sys.path')
     args = parser.parse_args()
 
+    # Add current directory to the path
+    logging.info("Adding curent directory to sys.path: %s", os.getcwd())
+    sys.path.insert(0, os.getcwd())
+
+    # Insert extra path components to pythonpath if passed
+    if args.pythonpath:
+        logging.info("Adding to sys.path: %s", args.pythonpath)
+        sys.path.insert(0, args.pythonpath)
+
     # Set grader settings module from command line
     if args.settings:
         settings = args.settings
     else:
         settings = os.environ.get('GRADER_SETTINGS_MODULE', '')
-
-    # Insert extra path components to pythonpath if passed
-    if args.pythonpath:
-        sys.path.insert(0, args.pythonpath)
+    logging.info("Settings module: %s", settings)
 
     # Create and start the grader
     grader = Grader()
