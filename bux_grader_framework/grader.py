@@ -112,11 +112,13 @@ class Grader(object):
         Forwards request to :class:`Config` instance.
         """
         try:
-            self.config.from_module(modulename)
+            result = self.config.from_module(modulename)
         except (ValueError, ImportError) as e:
             msg = "Could not load configuration module. {}".format(
                   e)
             raise ImproperlyConfiguredGrader(msg)
+
+        return result
 
     def xqueue(self):
         """ Returns a fresh :class:`XQueueClient` instance configured for this grader.
