@@ -12,9 +12,8 @@ class TestConfig(unittest.TestCase):
         result = self.config.from_module('dummy_config')
 
         self.assertTrue(result)
-        self.assertIn('XQUEUE_INTERFACE', self.config)
-        self.assertIsInstance(self.config['XQUEUE_INTERFACE'], dict)
-        self.assertEqual(self.config['XQUEUE_INTERFACE']['queue'], 'test_queue')
+        self.assertIn('XQUEUE_QUEUE', self.config)
+        self.assertEqual(self.config['XQUEUE_QUEUE'], 'test_queue')
         self.assertNotIn('ignoreme', self.config.keys())
 
     def test_from_module_raises_exception(self):

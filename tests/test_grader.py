@@ -26,7 +26,7 @@ class TestGrader(unittest.TestCase):
     def test_grader_config_from_module(self):
         result = self.grader.config_from_module('dummy_config')
         self.assertTrue(result)
-        self.assertIn('XQUEUE_INTERFACE', self.grader.config)
+        self.assertIn('XQUEUE_QUEUE', self.grader.config)
 
     def test_evaluators(self):
         self.grader.config_from_module('dummy_config')

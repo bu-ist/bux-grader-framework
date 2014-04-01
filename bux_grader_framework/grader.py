@@ -7,10 +7,14 @@
 
 import importlib
 import logging
+import time
 
 from .conf import Config
 from .evaluators import registered_evaluators
+from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader
+from .xqueue import XQueueClient
+from .queues import RabbitMQueue
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -28,6 +32,22 @@ class Grader(object):
     #: Defaults to :class:`Config`
     config_class = Config
 
+    default_config = {
+        "XQUEUE_QUEUE": "",
+        "XQUEUE_URL": "http://localhost:18040",
+        "XQUEUE_USER": "lms",
+        "XQUEUE_PASSWORD": "password",
+        "XQUEUE_TIMEOUT": 10,
+        "XQUEUE_POLL_INTERVAL": 1,
+        "WORKER_COUNT": 2,
+        "MONITOR_INTERVAL": 1,
+        "RABBITMQ_USER": "guest",
+        "RABBITMQ_PASSWORD": "guest",
+        "RABBITMQ_HOST": "localhost",
+        "RABBITMQ_PORT": 5672,
+        "RABBITMQ_VHOST": "/"
+    }
+
     def __init__(self):
 
         self._config = None
@@ -40,24 +60,114 @@ class Grader(object):
         2. Starts a :class:`EvaluatorWorker` process for each evaluator
         3. Enters a monitoring loop to check on each process
         """
-        pass
+        self.workers = []
+
+        # Create the XQueue worker
+        log.info("Creating XQueue worker process...")
+        xqueue_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
+        self.workers.append(xqueue_worker)
+
+        # Create an evaluator worker for each registered evaluator
+        log.info("Creating evaluator worker processes...")
+        for evaluator in self.evaluators:
+            for num in range(self.config['WORKER_COUNT']):
+                worker = EvaluatorWorker(evaluator, self)
+                self.workers.append(worker)
+
+        # Start all workers
+        for worker in self.workers:
+            log.info("Starting worker: %s", worker.name)
+            worker.start()
+
+        try:
+            while self.workers:
+                self.monitor()
+                time.sleep(self.config['MONITOR_INTERVAL'])
+        except (KeyboardInterrupt, SystemExit):
+            self.stop()
+
+        log.info("All workers removed, stopping...")
 
     def monitor(self):
         """ Monitors grader processes """
-        pass
+        for worker in self.workers:
+            if worker.exitcode is None:
+                continue
+            else:
+                log.error("Worker stopped unexpectedly: %s", worker)
+                # TODO: Restart
+                worker.close()
+                self.workers.remove(worker)
+
+    def stop(self):
+        """ Shuts down all worker processes """
+        log.info("Shutting down worker processes: %s", self.workers)
+        for worker in self.workers:
+            worker.join()
+        log.info("All workers stopped")
 
     def config_from_module(self, modulename):
         """ Loads grader configuration from a Python module.
 
         Forwards request to :class:`Config` instance.
         """
-        return self.config.from_module(modulename)
+        try:
+            result = self.config.from_module(modulename)
+        except (ValueError, ImportError) as e:
+            msg = "Could not load configuration module. {}".format(
+                  e)
+            raise ImproperlyConfiguredGrader(msg)
+
+        return result
+
+    def xqueue(self):
+        """ Returns a fresh :class:`XQueueClient` instance configured for this grader.
+
+            >>> xqueue = grader.xqueue()
+            >>> submission = xqueue.get_submission('test_queue')
+            >>> result = {"correct": True, "score": 1, "msg": "<p>Right!</p>"}
+            >>> xqueue.put_result('test_queue', submission, result)
+
+        """
+        try:
+            url = self.config['XQUEUE_URL']
+            username = self.config['XQUEUE_USER']
+            password = self.config['XQUEUE_PASSWORD']
+            timeout = self.config['XQUEUE_TIMEOUT']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return XQueueClient(url, username, password, timeout)
+
+    def work_queue(self):
+        """ Returns a fresh :class:`WorkQueue` instance configured for this grader.
+
+            >>> work_queue = grader.work_queue()
+            >>> work_queue.get('test_queue')
+            >>> work_queue.put('test_queue', 'message')
+            >>> work_queue.consume('test_queue')
+
+        """
+        try:
+            username = self.config['RABBITMQ_USER']
+            password = self.config['RABBITMQ_PASSWORD']
+            host = self.config['RABBITMQ_HOST']
+            port = self.config['RABBITMQ_PORT']
+            virtual_host = self.config['RABBITMQ_VHOST']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return RabbitMQueue(username, password, host, port, virtual_host)
+
+    def evaluator(self, name):
+        """ Returns an evaluator class by name """
+        pass
 
     @property
     def config(self):
         """ Holds the grader :class:`Config` object. """
         if self._config is None:
-            self._config = self.config_class()
+            self._config = self.config_class(self.default_config)
         return self._config
 
     @property

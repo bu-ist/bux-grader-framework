@@ -14,6 +14,13 @@ log = logging.getLogger(__name__)
 class Config(dict):
     """ A thin :class:`dict` wrapper customized for grader configuration. """
 
+    def __init__(self, defaults={}):
+        super(Config, self).__init__()
+
+        # Set default attributes
+        for key in defaults:
+            self[key] = defaults[key]
+
     def from_module(self, modulename):
         """ Load configuration from a Python module.
 
@@ -41,11 +48,10 @@ class Config(dict):
 
             The module must be discoverable on ``sys.path``.
         """
-        try:
-            mod = importlib.import_module(modulename)
-        except ImportError:
-            log.exception("Could not import configuration from module: %s", modulename)
-            raise
+        if not modulename:
+            raise ValueError("Empty module name")
+
+        mod = importlib.import_module(modulename)
 
         # Copy all uppercase attributes
         for attr in dir(mod):
