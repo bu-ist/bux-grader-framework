@@ -28,6 +28,9 @@ class XQueueWorker(multiprocessing.Process):
         self.queue_name = queue_name
         self.grader = grader
 
+        self.xqueue = grader.xqueue()
+        self.work_queue = grader.work_queue()
+
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
         self._is_running = False
 
@@ -38,10 +41,34 @@ class XQueueWorker(multiprocessing.Process):
         self._is_running = True
         try:
             while self._is_running:
+                # Pop any pending submissions and transfer to work queue
+                for submission in self.get_submissions():
+                    # Route submission to appropriate queue based on
+                    # grader_payload's "evaluator" value.
+                    payload = submission['xqueue_body']['grader_payload']
+                    evaluator = payload.get('evaluator', 'default')
+
+                    if evaluator:
+                        self.work_queue.put(evaluator, submission)
+
+                    # TODO: Handle case where "evaluator" is not set
+
+                # Sleep once all submissions are transferred
                 time.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
             # Grader manages worker shutdown
             pass
+
+    def get_submissions(self):
+        """ Submission generator """
+        if self.xqueue.get_queuelen(self.queue_name):
+            has_submissions = True
+            while has_submissions:
+                submission = self.xqueue.get_submission(self.queue_name)
+                if submission:
+                    yield submission
+                else:
+                    has_submissions = False
 
     def enqueue_submission(self, submission):
         """ Adds a submision popped from XQueue to an internal work queue. """
@@ -72,6 +99,9 @@ class EvaluatorWorker(multiprocessing.Process):
         self.evaluator = evaluator()
         self.grader = grader
 
+        self.xqueue = self.grader.xqueue()
+        self.queue = self.grader.work_queue()
+
         self._is_running = False
 
     def run(self):
@@ -81,8 +111,7 @@ class EvaluatorWorker(multiprocessing.Process):
         self._is_running = True
         try:
             while self._is_running:
-                # This will be handled by RabbitMQ consume method
-                time.sleep(1)
+                self.queue.consume(self.evaluator.name, self.handle_submission)
         except (KeyboardInterrupt, SystemExit):
             # Grader manages worker shutdown
             pass
@@ -90,10 +119,13 @@ class EvaluatorWorker(multiprocessing.Process):
     def handle_submission(self, submission):
         """ Handles a submission popped off the internal work queue.
 
-        Invokes ``self.evaluator.evalute()`` to generate a response.
+        Invokes ``self.evaluator.evaluate()`` to generate a response.
 
         """
-        pass
+        log.info("[%s] Evaluating submission #%s", self.name,
+                 submission['xqueue_header']['submission_id'])
+        result = self.evaluator.evaluate(submission)
+        self.xqueue.put_result(submission, result)
 
     def close(self):
         """ Gracefully shuts down worker process """
