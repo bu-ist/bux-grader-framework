@@ -55,4 +55,4 @@ XQueue
 .. autoexception:: bux_grader_framework.exceptions.ConnectionTimeout
 .. autoexception:: bux_grader_framework.exceptions.BadQueueName
 .. autoexception:: bux_grader_framework.exceptions.BadCredentials
-.. autoexception:: bux_grader_framework.exceptions.InvalidReply
+.. autoexception:: bux_grader_framework.exceptions.InvalidGraderReply
