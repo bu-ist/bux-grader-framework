@@ -16,5 +16,5 @@ setup(
     packages=['bux_grader_framework'],
     scripts=['bin/grader'],
     license='LICENSE',
-    install_requires=['requests']
+    install_requires=['requests', 'pika']
 )
