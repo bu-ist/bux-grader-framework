@@ -14,7 +14,7 @@ from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader
 from .xqueue import XQueueClient
-from .queues import WorkQueue
+from .queues import RabbitMQueue
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -40,7 +40,12 @@ class Grader(object):
         "XQUEUE_TIMEOUT": 10,
         "XQUEUE_POLL_INTERVAL": 1,
         "WORKER_COUNT": 2,
-        "MONITOR_INTERVAL": 1
+        "MONITOR_INTERVAL": 1,
+        "RABBITMQ_USER": "guest",
+        "RABBITMQ_PASSWORD": "guest",
+        "RABBITMQ_HOST": "localhost",
+        "RABBITMQ_PORT": 5672,
+        "RABBITMQ_VHOST": "/"
     }
 
     def __init__(self):
@@ -98,7 +103,6 @@ class Grader(object):
         """ Shuts down all worker processes """
         log.info("Shutting down worker processes: %s", self.workers)
         for worker in self.workers:
-            worker.close()
             worker.join()
         log.info("All workers stopped")
 
@@ -142,7 +146,16 @@ class Grader(object):
             >>> work_queue.consume('test_queue')
 
         """
-        return WorkQueue()
+        try:
+            username = self.config['RABBITMQ_USER']
+            password = self.config['RABBITMQ_PASSWORD']
+            host = self.config['RABBITMQ_HOST']
+            port = self.config['RABBITMQ_PORT']
+            virtual_host = self.config['RABBITMQ_VHOST']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return RabbitMQueue(username, password, host, port, virtual_host)
 
     def evaluator(self, name):
         """ Returns an evaluator class by name """

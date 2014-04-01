@@ -29,7 +29,7 @@ class XQueueWorker(multiprocessing.Process):
         self.grader = grader
 
         self.xqueue = grader.xqueue()
-        self.work_queue = grader.work_queue()
+        self.queue = grader.work_queue()
 
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
         self._is_running = False
@@ -38,6 +38,9 @@ class XQueueWorker(multiprocessing.Process):
         """ Polls XQueue for submissions. """
         log.info("[%s] XQueue worker (PID=%s) is polling for submissions...",
                  self.name, self.pid)
+
+        self.queue.connect()
+
         self._is_running = True
         try:
             while self._is_running:
@@ -49,15 +52,14 @@ class XQueueWorker(multiprocessing.Process):
                     evaluator = payload.get('evaluator', 'default')
 
                     if evaluator:
-                        self.work_queue.put(evaluator, submission)
+                        self.queue.put(evaluator, submission)
 
                     # TODO: Handle case where "evaluator" is not set
 
                 # Sleep once all submissions are transferred
                 time.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
-            # Grader manages worker shutdown
-            pass
+            self.close()
 
     def get_submissions(self):
         """ Submission generator """
@@ -78,6 +80,7 @@ class XQueueWorker(multiprocessing.Process):
         """ Gracefully shuts down worker process """
         log.info("[%s] Closing...", self.name)
         self._is_running = False
+        self.queue.close()
 
 
 class EvaluatorWorker(multiprocessing.Process):
@@ -108,13 +111,16 @@ class EvaluatorWorker(multiprocessing.Process):
         """ Polls submission queue. """
         log.info("[%s] '%s' evaluator (PID=%s) awaiting submissions...",
                  self.name, self.evaluator.name, self.pid)
+
+        self.queue.connect()
+
         self._is_running = True
         try:
             while self._is_running:
-                self.queue.consume(self.evaluator.name, self.handle_submission)
+                self.queue.consume(self.evaluator.name,
+                                   self.handle_submission)
         except (KeyboardInterrupt, SystemExit):
-            # Grader manages worker shutdown
-            pass
+            self.close()
 
     def handle_submission(self, submission):
         """ Handles a submission popped off the internal work queue.
@@ -124,10 +130,23 @@ class EvaluatorWorker(multiprocessing.Process):
         """
         log.info("[%s] Evaluating submission #%s", self.name,
                  submission['xqueue_header']['submission_id'])
-        result = self.evaluator.evaluate(submission)
-        self.xqueue.put_result(submission, result)
+
+        try:
+            result = self.evaluator.evaluate(submission)
+        except Exception:
+            log.exception("Could not evaluate submission: %s", submission)
+            return False
+
+        try:
+            self.xqueue.put_result(submission, result)
+        except Exception:
+            log.exception("Could not post reply to XQueue.")
+            return False
+
+        return True
 
     def close(self):
         """ Gracefully shuts down worker process """
         log.info("[%s] Closing...", self.name)
         self._is_running = False
+        self.queue.close()
