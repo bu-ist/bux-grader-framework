@@ -46,15 +46,7 @@ class XQueueWorker(multiprocessing.Process):
             while self._is_running:
                 # Pop any pending submissions and transfer to work queue
                 for submission in self.get_submissions():
-                    # Route submission to appropriate queue based on
-                    # grader_payload's "evaluator" value.
-                    payload = submission['xqueue_body']['grader_payload']
-                    evaluator = payload.get('evaluator', 'default')
-
-                    if evaluator:
-                        self.queue.put(evaluator, submission)
-
-                    # TODO: Handle case where "evaluator" is not set
+                    self.enqueue_submission(submission)
 
                 # Sleep once all submissions are transferred
                 time.sleep(self._poll_interval)
@@ -74,7 +66,13 @@ class XQueueWorker(multiprocessing.Process):
 
     def enqueue_submission(self, submission):
         """ Adds a submision popped from XQueue to an internal work queue. """
-        pass
+        payload = submission['xqueue_body']['grader_payload']
+        evaluator = payload.get('evaluator', 'default')
+
+        if evaluator:
+            self.queue.put(evaluator, submission)
+
+        # TODO: Handle case where "evaluator" is not set
 
     def close(self):
         """ Gracefully shuts down worker process """
