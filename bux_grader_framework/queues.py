@@ -124,10 +124,10 @@ class RabbitMQueue(object):
             submission = json.loads(body)
             response = eval_callback(submission)
             if response:
-                log.info(u" \u2713 Message %d acknowledged!", tag)
+                log.info(" * Message %d acknowledged!", tag)
                 ch.basic_ack(delivery_tag=tag)
             else:
-                log.error(u" \u2715 Message %d could not be evaluated: %s",
+                log.error(" !! Message %d could not be evaluated: %s",
                           tag, submission)
 
                 # TODO: Establish a procedure for recovering failed submissions
