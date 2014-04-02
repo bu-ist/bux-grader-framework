@@ -214,7 +214,14 @@ class XQueueClient(object):
             return False, "XQueue request failed: {}".format(str(e))
         log.debug("Raw XQueue response: {}".format(response.text))
 
-        success, content = self._parse_xreply(response.content)
+        # TODO: Handle POST data too large response (413)
+
+        try:
+            success, content = self._parse_xreply(response.content)
+        except InvalidXReply:
+            log.exception("Could not parse response: %s", response.content)
+            return False, "Could not parse XQueue reply"
+
         if not success:
             if "login_required" == content and retry_login:
                 log.debug("Login required, attempting login")
