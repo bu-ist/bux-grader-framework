@@ -126,8 +126,10 @@ class EvaluatorWorker(multiprocessing.Process):
         Invokes ``self.evaluator.evaluate()`` to generate a response.
 
         """
-        log.info("[%s] Evaluating submission #%s", self.name,
-                 submission['xqueue_header']['submission_id'])
+        time_start = time.time()
+
+        submission_id = submission['xqueue_header']['submission_id']
+        log.info("[%s] Received submission #%d", self.name, submission_id)
 
         try:
             result = self.evaluator.evaluate(submission)
@@ -140,6 +142,11 @@ class EvaluatorWorker(multiprocessing.Process):
         except Exception:
             log.exception("Could not post reply to XQueue.")
             return False
+
+        time_stop = time.time()
+        elapsed_time = (time_stop - time_start)*1000.0
+        log.info("[%s] Handled submission #%d in %0.3fms",
+                 self.name, submission_id, elapsed_time)
 
         return True
 
