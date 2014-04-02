@@ -97,7 +97,7 @@ class EvaluatorWorker(multiprocessing.Process):
     def __init__(self, evaluator, grader):
         super(EvaluatorWorker, self).__init__()
 
-        self.evaluator = evaluator()
+        self.evaluator = evaluator
         self.grader = grader
 
         self.xqueue = self.grader.xqueue()

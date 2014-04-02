@@ -10,7 +10,7 @@ import logging
 import time
 
 from .conf import Config
-from .evaluators import registered_evaluators
+from .evaluators import registered_evaluators, BaseEvaluator
 from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader
 from .xqueue import XQueueClient
@@ -69,9 +69,10 @@ class Grader(object):
 
         # Create an evaluator worker for each registered evaluator
         log.info("Creating evaluator worker processes...")
-        for evaluator in self.evaluators:
+        for eval_cls in self.evaluators:
+            config = self.evaluator_config(eval_cls)
             for num in range(self.config['WORKER_COUNT']):
-                worker = EvaluatorWorker(evaluator, self)
+                worker = EvaluatorWorker(eval_cls(**config), self)
                 self.workers.append(worker)
 
         # Start all workers
@@ -161,7 +162,18 @@ class Grader(object):
 
     def evaluator(self, name):
         """ Returns an evaluator class by name """
-        pass
+        for eval_cls in self.evaluators:
+            if eval_cls.name == name:
+                return eval_cls
+        return False
+
+    def evaluator_config(self, evaluator):
+        """ Get evaluator config """
+        if not issubclass(evaluator, BaseEvaluator):
+            evaluator = self.evaluator(evaluator)
+            if not evaluator:
+                return False
+        return self.config['EVALUATOR_CONFIG'].get(evaluator.name)
 
     @property
     def config(self):
