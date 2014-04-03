@@ -124,8 +124,17 @@ class Grader(object):
 
         return result
 
-    def configure_logging(self):
-        """ Setups logging.dictConfig from LOGGERS setting """
+    def setup_logging(self):
+        """ Sets up logging handlers
+
+        Courses can define a ``LOGGING`` :class:`dict` in
+        their settings module to customize.  It will be passed
+        to ``logging.config.dictConfig``.
+
+        If none is found, will fall back to the ``DEFAULT_LOGGING``
+        :class:`dict` defined in __init__.py.
+
+        """
         if "LOGGING" in self.config:
             logging.config.dictConfig(self.config['LOGGING'])
         else:

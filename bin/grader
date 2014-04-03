@@ -37,5 +37,5 @@ if __name__ == "__main__":
     # Create and start the grader
     grader = Grader()
     grader.config_from_module(settings)
-    grader.configure_logging()
+    grader.setup_logging()
     grader.run()
