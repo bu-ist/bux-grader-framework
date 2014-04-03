@@ -127,7 +127,7 @@ class Grader(object):
     def configure_logging(self):
         """ Setups logging.dictConfig from LOGGERS setting """
         if "LOGGING" in self.config:
-            logging.config.dictConfig(LOGGING)
+            logging.config.dictConfig(self.config['LOGGING'])
         else:
             logging.config.dictConfig(DEFAULT_LOGGING)
 
