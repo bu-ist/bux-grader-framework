@@ -118,8 +118,7 @@ class RabbitMQueue(object):
         def on_message_received(ch, method, header, body):
             """ Hides the RabbitMQ mechanics from the evaluator workers """
             tag = method.delivery_tag
-            log.info(" << Message %d consumed: %s, %s, %s",
-                     tag, method, header, body)
+            log.info(" << Message %d consumed", tag)
 
             submission = json.loads(body)
             response = eval_callback(submission)

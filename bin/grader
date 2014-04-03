@@ -11,9 +11,6 @@ import sys
 from bux_grader_framework import Grader
 
 if __name__ == "__main__":
-    # TODO: Set up logging from configuration
-    logging.basicConfig(level=logging.INFO)
-
     parser = argparse.ArgumentParser(description='Start your edX graders')
     parser.add_argument('--settings', dest='settings',
                         help='Grader settings module path')
@@ -22,12 +19,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Add current directory to the path
-    logging.info("Adding curent directory to sys.path: %s", os.getcwd())
+    print "Adding curent directory to sys.path: {}".format(os.getcwd())
     sys.path.insert(0, os.getcwd())
 
     # Insert extra path components to pythonpath if passed
     if args.pythonpath:
-        logging.info("Adding to sys.path: %s", args.pythonpath)
+        print "Adding to sys.path: {}".format(args.pythonpath)
         sys.path.insert(0, args.pythonpath)
 
     # Set grader settings module from command line
@@ -35,9 +32,10 @@ if __name__ == "__main__":
         settings = args.settings
     else:
         settings = os.environ.get('GRADER_SETTINGS_MODULE', '')
-    logging.info("Settings module: %s", settings)
+    print "Settings module: {}".format(settings)
 
     # Create and start the grader
     grader = Grader()
     grader.config_from_module(settings)
+    grader.configure_logging()
     grader.run()

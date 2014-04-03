@@ -7,7 +7,10 @@
 
 import importlib
 import logging
+import logging.config
 import time
+
+from . import DEFAULT_LOGGING
 
 from .conf import Config
 from .evaluators import registered_evaluators, BaseEvaluator
@@ -120,6 +123,13 @@ class Grader(object):
             raise ImproperlyConfiguredGrader(msg)
 
         return result
+
+    def configure_logging(self):
+        """ Setups logging.dictConfig from LOGGERS setting """
+        if "LOGGING" in self.config:
+            logging.config.dictConfig(LOGGING)
+        else:
+            logging.config.dictConfig(DEFAULT_LOGGING)
 
     def xqueue(self):
         """ Returns a fresh :class:`XQueueClient` instance configured for this grader.

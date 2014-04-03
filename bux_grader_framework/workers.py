@@ -36,8 +36,8 @@ class XQueueWorker(multiprocessing.Process):
 
     def run(self):
         """ Polls XQueue for submissions. """
-        log.info("[%s] XQueue worker (PID=%s) is polling for submissions...",
-                 self.name, self.pid)
+        log.info("XQueue worker (PID=%s) is polling for submissions...",
+                 self.pid)
 
         self.queue.connect()
 
@@ -76,7 +76,7 @@ class XQueueWorker(multiprocessing.Process):
 
     def close(self):
         """ Gracefully shuts down worker process """
-        log.info("[%s] Closing...", self.name)
+        log.info("Closing...")
         self._is_running = False
         self.queue.close()
 
@@ -107,8 +107,8 @@ class EvaluatorWorker(multiprocessing.Process):
 
     def run(self):
         """ Polls submission queue. """
-        log.info("[%s] '%s' evaluator (PID=%s) awaiting submissions...",
-                 self.name, self.evaluator.name, self.pid)
+        log.info("'%s' evaluator (PID=%s) awaiting submissions...",
+                 self.evaluator.name, self.pid)
 
         self.queue.connect()
 
@@ -129,7 +129,7 @@ class EvaluatorWorker(multiprocessing.Process):
         time_start = time.time()
 
         submission_id = submission['xqueue_header']['submission_id']
-        log.info("[%s] Received submission #%d", self.name, submission_id)
+        log.info("Evaluating submission #%d", submission_id)
 
         try:
             result = self.evaluator.evaluate(submission)
@@ -145,13 +145,13 @@ class EvaluatorWorker(multiprocessing.Process):
 
         time_stop = time.time()
         elapsed_time = (time_stop - time_start)*1000.0
-        log.info("[%s] Handled submission #%d in %0.3fms",
-                 self.name, submission_id, elapsed_time)
+        log.info("Submission #%d evaluated in %0.3fms",
+                 submission_id, elapsed_time)
 
         return True
 
     def close(self):
         """ Gracefully shuts down worker process """
-        log.info("[%s] Closing...", self.name)
+        log.info("Closing...")
         self._is_running = False
         self.queue.close()
