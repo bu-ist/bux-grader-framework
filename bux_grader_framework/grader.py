@@ -94,14 +94,47 @@ class Grader(object):
 
     def monitor(self):
         """ Monitors grader processes """
+        finished = []
+        failed = []
+
+        # Check status codes for all workers
         for worker in self.workers:
-            if worker.exitcode is None:
+            exitcode = worker.exitcode
+
+            # Process is running
+            if exitcode is None:
                 continue
+            # Process has failed
+            elif exitcode >= 1:
+                failed.append(worker)
+            # Process has finished (0) or been interrupted (<0)
             else:
-                log.error("Worker stopped unexpectedly: %s", worker)
-                # TODO: Restart
-                worker.close()
-                self.workers.remove(worker)
+                finished.append(worker)
+
+        # Remove finished workers
+        for worker in finished:
+            log.info('Worker stopped: %s', worker.name)
+            self.workers.remove(worker)
+
+        # Restart failed workers
+        for worker in failed:
+            log.info('Worker failed: %s', worker.name)
+            self.workers.remove(worker)
+
+            # Create a new process using the same class / configuration
+            if type(worker) == XQueueWorker:
+                new_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
+            elif type(worker) == EvaluatorWorker:
+                eval_cls = type(worker.evaluator)
+                config = self.evaluator_config(eval_cls)
+                new_worker = EvaluatorWorker(eval_cls(**config), self)
+
+            if new_worker:
+                self.workers.append(new_worker)
+                log.info('Restarting worker: %s', new_worker.name)
+                new_worker.start()
+            else:
+                log.error('Could not re-start worker: %s', worker.name)
 
     def stop(self):
         """ Shuts down all worker processes """
