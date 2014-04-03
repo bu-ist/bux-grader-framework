@@ -49,7 +49,9 @@ class XQueueWorker(multiprocessing.Process):
                     self.enqueue_submission(submission)
 
                 # Sleep once all submissions are transferred
-                time.sleep(self._poll_interval)
+                # Uses queue.sleep which pings RabbitMQ to prevent
+                # heartbeat_interval-related timeouts.
+                self.queue.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
             self.close()
 

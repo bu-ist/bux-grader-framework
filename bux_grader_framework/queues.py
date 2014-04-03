@@ -140,6 +140,15 @@ class RabbitMQueue(object):
             channel.stop_consuming()
             raise
 
+    def sleep(self, duration):
+        """ A wrapper around BlockingConnection.sleep()
+
+        Use this instead of time.sleep() to prevent heartbeat_interval
+        related timeouts.
+
+        """
+        self._connection.sleep(duration)
+
     def close(self):
         if self._connection:
             self._connection.close()
