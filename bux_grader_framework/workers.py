@@ -9,7 +9,19 @@ import logging
 import multiprocessing
 import time
 
+from string import Template
+
 log = logging.getLogger(__name__)
+
+
+FAIL_RESPONSE = Template("""
+<div>
+<p>The external grader was unable to process this submission.
+Please contact course staff.</p>
+<p><strong>Reason:</strong></p>
+<pre><code>$reason</code></pre>
+</div>
+""")
 
 
 class XQueueWorker(multiprocessing.Process):
@@ -68,13 +80,29 @@ class XQueueWorker(multiprocessing.Process):
 
     def enqueue_submission(self, submission):
         """ Adds a submision popped from XQueue to an internal work queue. """
+        header = submission['xqueue_header']
         payload = submission['xqueue_body']['grader_payload']
-        evaluator = payload.get('evaluator', 'default')
+        evaluator = payload.get('evaluator')
 
-        if evaluator:
+        log.info("Submission #%d received from XQueue", header['submission_id'])
+
+        # Tempory back compat for edge grader
+        if not evaluator:
+            evaluator = payload.get('grader')
+
+        # Ensure evaluator is registered
+        if evaluator and self.grader.is_registered_evaluator(evaluator):
             self.queue.put(evaluator, submission)
-
-        # TODO: Handle case where "evaluator" is not set
+        else:
+            reason = "Problem evaluator could not be found: %s" % evaluator
+            response = {
+                "correct": False,
+                "score": 0,
+                "msg": FAIL_RESPONSE.substitute(reason=reason)
+            }
+            log.error("No evaluator found for submission #%d: %s",
+                      header['submission_id'], evaluator)
+            self.xqueue.put_result(submission, response)
 
     def close(self):
         """ Gracefully shuts down worker process """
@@ -86,8 +114,7 @@ class XQueueWorker(multiprocessing.Process):
 class EvaluatorWorker(multiprocessing.Process):
     """ Evaluates submissions pulled from the internal work queue.
 
-        :param evaluator: a :class:`BaseEvaluator` subclass for handling
-                          submissions
+        :param str evaluator: name of the evaluator class for this worker
         :param Grader grader: a configured grader instance
 
         If the evaluation is successful, the result is posted to XQueue.
@@ -99,9 +126,9 @@ class EvaluatorWorker(multiprocessing.Process):
     def __init__(self, evaluator, grader):
         super(EvaluatorWorker, self).__init__()
 
-        self.evaluator = evaluator
         self.grader = grader
 
+        self.evaluator = self.grader.evaluator(evaluator)
         self.xqueue = self.grader.xqueue()
         self.queue = self.grader.work_queue()
 

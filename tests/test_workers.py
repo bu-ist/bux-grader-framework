@@ -18,7 +18,10 @@ class TestXQueueWorker(unittest.TestCase):
         self.worker = XQueueWorker("dummy_queue", mock_grader)
 
     def test_enqueue_submission(self):
-        submission = {"xqueue_body": {"grader_payload": {"evaluator": "foo"}}}
+        submission = {
+            "xqueue_header": {"submission_id": 1},
+            "xqueue_body": {"grader_payload": {"evaluator": "foo"}}
+            }
         self.worker.enqueue_submission(submission)
 
         self.worker.queue.put.assert_called_with('foo', submission)

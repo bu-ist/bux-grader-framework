@@ -72,10 +72,9 @@ class Grader(object):
 
         # Create an evaluator worker for each registered evaluator
         log.info("Creating evaluator worker processes...")
-        for eval_cls in self.evaluators:
-            config = self.evaluator_config(eval_cls)
+        for evaluator in self.evaluators:
             for num in range(self.config['WORKER_COUNT']):
-                worker = EvaluatorWorker(eval_cls(**config), self)
+                worker = EvaluatorWorker(evaluator, self)
                 self.workers.append(worker)
 
         # Start all workers
@@ -125,9 +124,7 @@ class Grader(object):
             if type(worker) == XQueueWorker:
                 new_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
             elif type(worker) == EvaluatorWorker:
-                eval_cls = type(worker.evaluator)
-                config = self.evaluator_config(eval_cls)
-                new_worker = EvaluatorWorker(eval_cls(**config), self)
+                new_worker = EvaluatorWorker(worker.evaluator.name, self)
 
             if new_worker:
                 self.workers.append(new_worker)
@@ -213,19 +210,42 @@ class Grader(object):
         return RabbitMQueue(username, password, host, port, virtual_host)
 
     def evaluator(self, name):
-        """ Returns an evaluator class by name """
-        for eval_cls in self.evaluators:
-            if eval_cls.name == name:
-                return eval_cls
-        return False
+        """ Returns a configured evaluator.
 
-    def evaluator_config(self, evaluator):
+            :raises ImproperlyConfiguredGrader: if ``name`` is not a
+                    registered evaluator.
+
+        """
+        if not self.is_registered_evaluator(name):
+            raise ImproperlyConfiguredGrader
+
+        eval_cls = self.get_evaluator_class(name)
+        eval_config = self.get_evaluator_config(name)
+
+        try:
+            evaluator = eval_cls(**eval_config)
+        except TypeError:
+            log.exception("Could not create evaluator: %s", name)
+            raise ImproperlyConfiguredGrader("Could not create evaluator: %s" % name)
+        return evaluator
+
+    def get_evaluator_class(self, name):
+        """ Returns an evaluator class by name """
+        if not self.is_registered_evaluator(name):
+            return False
+
+        return self.evaluators[name]
+
+    def get_evaluator_config(self, name):
         """ Get evaluator config """
-        if not issubclass(evaluator, BaseEvaluator):
-            evaluator = self.evaluator(evaluator)
-            if not evaluator:
-                return False
-        return self.config['EVALUATOR_CONFIG'].get(evaluator.name)
+        if not self.is_registered_evaluator(name):
+            return False
+
+        return self.config['EVALUATOR_CONFIG'].get(name, {})
+
+    def is_registered_evaluator(self, name):
+        """ Returns whether or not an evaluator is registered by name. """
+        return name in self.evaluators.keys()
 
     @property
     def config(self):
@@ -236,7 +256,21 @@ class Grader(object):
 
     @property
     def evaluators(self):
-        """ Registry of ``EVALUATOR_MODULES``
+        """ Registry of ``EVALUATOR_MODULES``.
+
+            Returns a dict of evaluator classes keyed on
+            their ``name`` attributes.  For instance:
+
+            .. code-block:: python
+
+                class MySQLEvaluator(BaseEvaluator):
+                    name = 'mysql'
+
+            Would produce:
+
+            .. code-block:: python
+
+                {'mysql': MySQLEvaluator}
 
             :raises ImproperlyConfiguredGrader: if ``EVALUATOR_MODULES`` can
                                                 not be imported properly
@@ -266,8 +300,8 @@ class Grader(object):
         evaluator_classes = registered_evaluators()
 
         # Filter out classes that were not imported from EVALUATOR_MODULES
-        evaluators = [cls for cls in evaluator_classes
-                      if class_imported_from(cls, modules)]
+        evaluators = dict((cls.name, cls) for cls in evaluator_classes
+                          if class_imported_from(cls, modules))
 
         if not evaluators:
             evaluator_list = ", ".join(self.config["EVALUATOR_MODULES"])
