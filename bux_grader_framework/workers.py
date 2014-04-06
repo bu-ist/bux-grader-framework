@@ -44,7 +44,9 @@ class XQueueWorker(multiprocessing.Process):
         self.queue = grader.work_queue()
 
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
-        self._is_running = False
+        self.exit_signal = multiprocessing.Event()
+
+        self.xqueue.login()
 
     def run(self):
         """ Polls XQueue for submissions. """
@@ -53,9 +55,8 @@ class XQueueWorker(multiprocessing.Process):
 
         self.queue.connect()
 
-        self._is_running = True
         try:
-            while self._is_running:
+            while not self.exit_signal.is_set():
                 # Pop any pending submissions and transfer to work queue
                 for submission in self.get_submissions():
                     self.enqueue_submission(submission)
@@ -65,7 +66,9 @@ class XQueueWorker(multiprocessing.Process):
                 # heartbeat_interval-related timeouts.
                 self.queue.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
-            self.close()
+            pass
+
+        self.queue.close()
 
     def get_submissions(self):
         """ Submission generator """
@@ -107,8 +110,7 @@ class XQueueWorker(multiprocessing.Process):
     def close(self):
         """ Gracefully shuts down worker process """
         log.info("Closing...")
-        self._is_running = False
-        self.queue.close()
+        self.exit_signal.set()
 
 
 class EvaluatorWorker(multiprocessing.Process):

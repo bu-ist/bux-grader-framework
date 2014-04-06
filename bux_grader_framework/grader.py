@@ -8,14 +8,15 @@
 import importlib
 import logging
 import logging.config
+import sys
 import time
 
 from . import DEFAULT_LOGGING
 
 from .conf import Config
-from .evaluators import registered_evaluators, BaseEvaluator
+from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker
-from .exceptions import ImproperlyConfiguredGrader
+from .exceptions import ImproperlyConfiguredGrader, XQueueException
 from .xqueue import XQueueClient
 from .queues import RabbitMQueue
 from .util import class_imported_from
@@ -42,6 +43,8 @@ class Grader(object):
         "XQUEUE_PASSWORD": "password",
         "XQUEUE_TIMEOUT": 10,
         "XQUEUE_POLL_INTERVAL": 1,
+        "XQUEUE_MAX_RETRIES": 5,
+        "XQUEUE_RETRY_INTERVAL": 5,
         "WORKER_COUNT": 2,
         "MONITOR_INTERVAL": 1,
         "RABBITMQ_USER": "guest",
@@ -122,7 +125,9 @@ class Grader(object):
 
             # Create a new process using the same class / configuration
             if type(worker) == XQueueWorker:
-                new_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
+                new_worker = self.restart_xqueue()
+                if not new_worker:
+                    sys.exit("Could not restart XQueue.")
             elif type(worker) == EvaluatorWorker:
                 new_worker = EvaluatorWorker(worker.evaluator.name, self)
 
@@ -132,6 +137,33 @@ class Grader(object):
                 new_worker.start()
             else:
                 log.error('Could not re-start worker: %s', worker.name)
+
+    def restart_xqueue(self):
+        """ Restarts XQueueWorker process on failure.
+
+        Will try ``XQUEUE_MAX_RETRIES`` with ``XQUEUE_RETRY_INTERVAL``
+        seconds between each attempt before giving up.
+
+        """
+        attempts = 0
+        while attempts < self.config["XQUEUE_MAX_RETRIES"]:
+            attempts += 1
+            log.info("Restarting XQueueWorker (attempt %d of %d)",
+                     attempts, self.config["XQUEUE_MAX_RETRIES"])
+
+            try:
+                worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
+            except XQueueException:
+                log.exception("Restart failed, sleeping %d seconds...",
+                              self.config["XQUEUE_RETRY_INTERVAL"])
+                time.sleep(self.config["XQUEUE_RETRY_INTERVAL"])
+            else:
+                return worker
+        else:
+            log.critical("Failed to restart XQueueWorker after %d attempts",
+                         attempts)
+            return False
+        return worker
 
     def stop(self):
         """ Shuts down all worker processes """
