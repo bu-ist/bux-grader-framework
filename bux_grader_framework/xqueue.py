@@ -271,18 +271,20 @@ class XQueueClient(object):
         if not isinstance(body_dict, dict):
             raise InvalidXRequest
 
-        for body_key in ['student_info', 'grader_payload', 'student_response']:
+        for body_key in ['grader_payload', 'student_response']:
             if body_key not in body_dict:
                 raise InvalidXRequest
 
         try:
-            student_info = json.loads(body_dict['student_info'])
-            grader_payload = json.loads(body_dict['grader_payload'])
+            body_dict['grader_payload'] = json.loads(body_dict['grader_payload'])
         except (TypeError, ValueError):
             raise InvalidXRequest
 
-        body_dict['student_info'] = student_info
-        body_dict['grader_payload'] = grader_payload
+        # Student info dict isn't always present (e.g. load test submissions)
+        try:
+            body_dict['student_info'] = json.loads(body_dict['student_info'])
+        except (KeyError, TypeError, ValueError):
+            body_dict['student_info'] = {}
 
         return header_dict, body_dict, files_dict
 
