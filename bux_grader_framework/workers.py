@@ -7,6 +7,8 @@
 
 import logging
 import multiprocessing
+import signal
+import sys
 import time
 
 from string import Template
@@ -44,7 +46,10 @@ class XQueueWorker(multiprocessing.Process):
         self.queue = grader.work_queue()
 
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
-        self.exit_signal = multiprocessing.Event()
+
+        # Shut down handling
+        self._stop = multiprocessing.Event()
+        signal.signal(signal.SIGTERM, self.on_sigterm)
 
         self.xqueue.login()
 
@@ -56,7 +61,7 @@ class XQueueWorker(multiprocessing.Process):
         self.queue.connect()
 
         try:
-            while not self.exit_signal.is_set():
+            while not self._stop.is_set():
                 # Pop any pending submissions and transfer to work queue
                 for submission in self.get_submissions():
                     self.enqueue_submission(submission)
@@ -109,8 +114,11 @@ class XQueueWorker(multiprocessing.Process):
 
     def close(self):
         """ Gracefully shuts down worker process """
-        log.info("Closing...")
-        self.exit_signal.set()
+        self._stop.set()
+
+    def on_sigterm(self, signum, frame):
+        """ Break out of run loop on SIGTERM """
+        self.close()
 
 
 class EvaluatorWorker(multiprocessing.Process):
@@ -134,7 +142,9 @@ class EvaluatorWorker(multiprocessing.Process):
         self.xqueue = self.grader.xqueue()
         self.queue = self.grader.work_queue()
 
-        self._is_running = False
+        # Attaches a callback handler for SIGTERM signals to
+        # handle consumer canceling / connection closing
+        signal.signal(signal.SIGTERM, self.on_sigterm)
 
     def run(self):
         """ Polls submission queue. """
@@ -143,13 +153,13 @@ class EvaluatorWorker(multiprocessing.Process):
 
         self.queue.connect()
 
-        self._is_running = True
         try:
-            while self._is_running:
-                self.queue.consume(self.evaluator.name,
-                                   self.handle_submission)
+            self.queue.consume(self.evaluator.name,
+                               self.handle_submission)
         except (KeyboardInterrupt, SystemExit):
-            self.close()
+            pass
+
+        self.queue.close()
 
     def handle_submission(self, submission):
         """ Handles a submission popped off the internal work queue.
@@ -181,8 +191,9 @@ class EvaluatorWorker(multiprocessing.Process):
 
         return True
 
-    def close(self):
-        """ Gracefully shuts down worker process """
-        log.info("Closing...")
-        self._is_running = False
-        self.queue.close()
+    def on_sigterm(self, signum, frame):
+        """ Breaks out of run loop on SIGTERM """
+        # Implicitly stops consumer by raising a SystemExit exception
+        # in this process.
+        # TODO: Better approach to consumer cancelation
+        sys.exit()
