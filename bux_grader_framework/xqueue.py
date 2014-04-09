@@ -273,7 +273,7 @@ class XQueueClient(object):
         # Attempt to parse grader payload as JSON
         try:
             payload = body_dict['grader_payload']
-            body_dict['grader_payload'] = json.loads(payload)
+            body_dict['grader_payload'] = json.loads(payload, strict=False)
         except (TypeError, ValueError):
             log.exception('Unable to parse "grader_payload"')
             # Could be an invalid JSON string, but might not be JSON at all.
