@@ -5,6 +5,7 @@
     This module defines work queues utilized by the evalutator workers.
 """
 
+import functools
 import json
 import logging
 import time
@@ -108,7 +109,7 @@ class RabbitMQueue(object):
                               properties=properties)
         statsd.incr('bux_grader_framework.submissions.put')
 
-    def consume(self, queue_name, eval_callback):
+    def consume(self, queue_name, eval_callback, prefetch=12):
         """ Poll a particular queue for submissions
 
             :param str queue_name: queue to consume requests from
@@ -117,34 +118,41 @@ class RabbitMQueue(object):
         """
 
         channel = self.get_channel()
+        channel.basic_qos(prefetch_count=prefetch)
         channel.queue_declare(queue=queue_name, durable=True)
 
-        def on_message_received(ch, method, header, body):
-            """ Hides the RabbitMQ mechanics from the evaluator workers """
-            tag = method.delivery_tag
-            log.info(" << Message %d consumed", tag)
-
-            submission = json.loads(body)
-            response = eval_callback(submission)
-            if response:
-                log.info(" * Message %d acknowledged!", tag)
-                ch.basic_ack(delivery_tag=tag)
-                statsd.incr('bux_grader_framework.submissions.success')
-            else:
-                log.error(" !! Message %d could not be evaluated: %s",
-                          tag, submission)
-
-                # TODO: Establish a procedure for recovering failed submissions
-                ch.basic_nack(delivery_tag=tag, requeue=False)
-                statsd.incr('bux_grader_framework.submissions.failure')
-
-        channel.basic_consume(on_message_received, queue_name)
+        callback = functools.partial(self.on_message_received, eval_callback)
+        channel.basic_consume(callback, queue_name)
 
         try:
             channel.start_consuming()
         except (KeyboardInterrupt, SystemExit):
             channel.stop_consuming()
             raise
+
+    def on_message_received(self, eval_callback, ch, method, header, body):
+        """ Hides the RabbitMQ mechanics from the evaluator workers """
+        log.info(" << Message %d consumed", method.delivery_tag)
+
+        callback = functools.partial(self.on_complete, ch, method)
+        submission = json.loads(body)
+        eval_callback(submission, callback)
+
+    def on_complete(self, ch, method, success):
+        """ Responds to RabbitMQ after a submission is handled.
+
+        This method is called to the evaluator thread, which will pass in
+        the result of the submission handling.
+
+        """
+        if success:
+            log.info("<< Message %d ack'd", method.delivery_tag)
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            statsd.incr('bux_grader_framework.submissions.success')
+        else:
+            log.error("<< Message %d nack'd", method.delivery_tag)
+            ch.basic_nack(delivery_tag=method.delivery_tag)
+            statsd.incr('bux_grader_framework.submissions.error')
 
     def sleep(self, duration):
         """ A wrapper around BlockingConnection.sleep()
