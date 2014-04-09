@@ -86,27 +86,45 @@ class XQueueWorker(multiprocessing.Process):
         """ Adds a submision popped from XQueue to an internal work queue. """
         header = submission['xqueue_header']
         payload = submission['xqueue_body']['grader_payload']
-        evaluator = payload.get('evaluator', self._default_evaluator)
 
         log.info("Submission #%d received from XQueue", header['submission_id'])
+
+        # Assert the grader payload is a dict
+        if not isinstance(payload, dict):
+            self.push_failure("Grader payload could not be parsed", submission)
+            return False
+
+        # Determine which evaluator queue the submission should be routed to
+        evaluator = payload.get('evaluator', self._default_evaluator)
 
         # Tempory back compat for edge grader
         if not evaluator:
             evaluator = payload.get('grader')
 
-        # Ensure evaluator is registered
+        # Ensure evaluator is registered with this grader
         if evaluator and self.grader.is_registered_evaluator(evaluator):
+            # Push to evaluator work queue
             self.queue.put(evaluator, submission)
         else:
-            reason = "Problem evaluator could not be found: %s" % evaluator
-            response = {
-                "correct": False,
-                "score": 0,
-                "msg": FAIL_RESPONSE.substitute(reason=reason)
-            }
-            log.error("No evaluator found for submission #%d: %s",
-                      header['submission_id'], evaluator)
-            self.xqueue.put_result(submission, response)
+            # Notify LMS that the submission could not be handled
+            self.push_failure("Evaluator could not be found: {}".format(
+                              evaluator), submission)
+
+    def push_failure(self, reason, submission):
+        """ Sends a failing response to XQueue
+
+            :param str reason: the reason for the failure
+            :param dict submission: the submission that could not be handled
+
+        """
+        submit_id = submission['xqueue_header']['submission_id']
+        response = {
+            "correct": False,
+            "score": 0,
+            "msg": FAIL_RESPONSE.substitute(reason=reason)
+        }
+        log.error("Could not handle submission #%d: %s", submit_id, reason)
+        self.xqueue.put_result(submission, response)
 
     def close(self):
         """ Gracefully shuts down worker process """
