@@ -219,7 +219,7 @@ class XQueueClient(object):
         try:
             success, content = self._parse_xreply(response.content)
         except InvalidXReply:
-            log.exception("Could not parse response: %s", response.content)
+            log.exception("Invalid XQueue reply: {}".format(response.content))
             return False, "Could not parse XQueue reply"
 
         if not success:
@@ -307,14 +307,14 @@ class XQueueClient(object):
         try:
             xreply = json.loads(reply)
         except (TypeError, ValueError):
-            raise InvalidXReply
+            raise InvalidXReply("XQueue response is not JSON")
 
         if not isinstance(xreply, dict):
-            raise InvalidXReply
+            raise InvalidXReply("XQueue reply is not a dict")
 
         for key in ['return_code', 'content']:
             if key not in xreply:
-                raise InvalidXReply
+                raise InvalidXReply("XQueue response dict is missing keys")
 
         success = (xreply['return_code'] == 0)
         return success, xreply['content']
