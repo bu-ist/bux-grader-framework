@@ -275,7 +275,7 @@ class XQueueClient(object):
             payload = body_dict['grader_payload']
             body_dict['grader_payload'] = json.loads(payload, strict=False)
         except (TypeError, ValueError):
-            log.exception('Unable to parse "grader_payload"')
+            log.warning('Unable to parse "grader_payload": %s', payload)
             # Could be an invalid JSON string, but might not be JSON at all.
             # Leave it as-is and let the calling code deal with it.
             pass
