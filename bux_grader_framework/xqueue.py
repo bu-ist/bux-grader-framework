@@ -142,12 +142,7 @@ class XQueueClient(object):
 
         # Convert response string to dicts
         submission = json.loads(content)
-        try:
-            header, body, files = self._parse_xrequest(submission)
-        except InvalidXRequest:
-            log.exception("Malformed submission received from XQueue: {}"
-                          .format(submission))
-            raise
+        header, body, files = self._parse_xrequest(submission)
 
         log.debug("Retrieved submission from \"{}\": {}".format(queue_name,
                                                                 submission))
@@ -275,15 +270,23 @@ class XQueueClient(object):
             if body_key not in body_dict:
                 raise InvalidXRequest
 
+        # Attempt to parse grader payload as JSON
         try:
-            body_dict['grader_payload'] = json.loads(body_dict['grader_payload'])
+            payload = body_dict['grader_payload']
+            body_dict['grader_payload'] = json.loads(payload, strict=False)
         except (TypeError, ValueError):
-            raise InvalidXRequest
+            log.exception('Unable to parse "grader_payload"')
+            # Could be an invalid JSON string, but might not be JSON at all.
+            # Leave it as-is and let the calling code deal with it.
+            pass
 
-        # Student info dict isn't always present (e.g. load test submissions)
+        # Attempt to parse student info dict
         try:
-            body_dict['student_info'] = json.loads(body_dict['student_info'])
+            student_info = body_dict['student_info']
+            body_dict['student_info'] = json.loads(student_info)
         except (KeyError, TypeError, ValueError):
+            # Student info dict isn't always present (e.g. load test
+            # submissions) so we fail silently.
             body_dict['student_info'] = {}
 
         return header_dict, body_dict, files_dict

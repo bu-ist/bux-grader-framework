@@ -284,6 +284,24 @@ class TestXQueueClient(unittest.TestCase):
         self.assertRaises(InvalidXRequest,
                           self.client._parse_xrequest, xrequest)
 
+    def test__parse_xrequest_payload_string(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        xbody = json.loads(xrequest["xqueue_body"])
+        xbody["grader_payload"] = "test string"
+        xrequest["xqueue_body"] = json.dumps(xbody)
+
+        header, body, files = self.client._parse_xrequest(xrequest)
+        self.assertEquals("test string", body["grader_payload"])
+
+    def test__parse_xrequest_payload_json_allows_control_chars(self):
+        xrequest = json.loads(DUMMY_XREQUEST_ENCODED)
+        xbody = json.loads(xrequest["xqueue_body"])
+        xbody["grader_payload"] = '{"answer": "SELECT *\r\nWHERE id = 10"}'
+        xrequest["xqueue_body"] = json.dumps(xbody)
+
+        header, body, files = self.client._parse_xrequest(xrequest)
+        self.assertEquals("SELECT *\r\nWHERE id = 10",
+                          body["grader_payload"]["answer"])
 
 if __name__ == '__main__':
     unittest.main()
