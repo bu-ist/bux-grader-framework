@@ -209,7 +209,12 @@ class XQueueClient(object):
             return False, "XQueue request failed: {}".format(str(e))
         log.debug("Raw XQueue response: {}".format(response.text))
 
-        # TODO: Handle POST data too large response (413)
+        # Check status code before attempting to parse
+        if response.status_code not in [200]:
+            log.error('HTTP request failed: %s [%d]', response.content,
+                      response.status_code)
+            return False, 'Unexpected HTTP status code [{}]'.format(
+                          response.status_code)
 
         try:
             success, content = self._parse_xreply(response.content)

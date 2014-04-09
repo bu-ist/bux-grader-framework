@@ -166,6 +166,7 @@ class TestXQueueClient(unittest.TestCase):
     def test__request(self):
         xreply = {"return_code": 0, "content": "success"}
         response = MagicMock(spec=requests.Response())
+        response.status_code = 200
         response.content = json.dumps(xreply)
 
         self.client.session.request = MagicMock(return_value=response)
@@ -177,10 +178,12 @@ class TestXQueueClient(unittest.TestCase):
     def test__request_retries_login(self, mock_login):
         initial_xreply = {"return_code": 1, "content": "login_required"}
         pre_login_response = MagicMock(spec=requests.Response())
+        pre_login_response.status_code = 200
         pre_login_response.content = json.dumps(initial_xreply)
 
         final_xreply = {"return_code": 0, "content": "success"}
         post_login_response = MagicMock(spec=requests.Response())
+        post_login_response.status_code = 200
         post_login_response.content = json.dumps(final_xreply)
 
         side_effect = [pre_login_response, post_login_response]
@@ -195,6 +198,7 @@ class TestXQueueClient(unittest.TestCase):
         # Initial `GET "/xqueue/queuelen/"` response
         initial_response = {"return_code": 1, "content": "login_required"}
         pre_login_response = MagicMock(spec=requests.Response())
+        pre_login_response.status_code = 200
         pre_login_response.content = json.dumps(initial_response)
 
         self.client.session.request = MagicMock(return_value=pre_login_response)
@@ -214,6 +218,17 @@ class TestXQueueClient(unittest.TestCase):
         response = (False, "XQueue request exceeded timeout of {}s".format(
                            self.client.timeout))
         mock_request = MagicMock(side_effect=Timeout)
+        self.client.session.request = mock_request
+
+        self.assertEquals(response,
+                          self.client._request('http://example.com', 'get'))
+
+    def test__request_non_200(self):
+        response = (False, "Unexpected HTTP status code [503]")
+        mock_response = MagicMock(spec=requests.Response())
+        mock_response.status_code = 503
+        mock_response.content = 'Xqueue 500 error'
+        mock_request = MagicMock(return_value=mock_response)
         self.client.session.request = mock_request
 
         self.assertEquals(response,
