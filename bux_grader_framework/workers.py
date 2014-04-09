@@ -44,6 +44,7 @@ class XQueueWorker(multiprocessing.Process):
         self.queue = grader.work_queue()
 
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
+        self._default_evaluator = grader.config['DEFAULT_EVALUATOR']
         self.exit_signal = multiprocessing.Event()
 
         self.xqueue.login()
@@ -85,7 +86,7 @@ class XQueueWorker(multiprocessing.Process):
         """ Adds a submision popped from XQueue to an internal work queue. """
         header = submission['xqueue_header']
         payload = submission['xqueue_body']['grader_payload']
-        evaluator = payload.get('evaluator')
+        evaluator = payload.get('evaluator', self._default_evaluator)
 
         log.info("Submission #%d received from XQueue", header['submission_id'])
 

@@ -51,7 +51,8 @@ class Grader(object):
         "RABBITMQ_PASSWORD": "guest",
         "RABBITMQ_HOST": "localhost",
         "RABBITMQ_PORT": 5672,
-        "RABBITMQ_VHOST": "/"
+        "RABBITMQ_VHOST": "/",
+        "DEFAULT_EVALUATOR": None
     }
 
     def __init__(self):
