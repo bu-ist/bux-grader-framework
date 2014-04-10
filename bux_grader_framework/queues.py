@@ -10,7 +10,9 @@ import logging
 import time
 import multiprocessing
 import Queue
+import urllib
 
+import rabbitpy
 import pika
 
 from statsd import statsd
@@ -58,7 +60,11 @@ class WorkQueue(object):
 
 
 class RabbitMQueue(object):
-    """ Internal submission work queue. Backed by RabbitMQ. """
+    """ Internal submission work queue. Backed by RabbitMQ.
+
+    Uses pika BlockingConnection.
+
+    """
     def __init__(self, username='guest', password='guest', host='localhost',
                  port=5672, virtual_host='/'):
         self.username = username
@@ -159,3 +165,79 @@ class RabbitMQueue(object):
         """ Close the RabbitMQ connection """
         if self._connection:
             self._connection.close()
+
+
+class RabbitPyQueue(object):
+    """ Internal submission work queue. Backed by RabbitMQ.
+
+    Uses "rabbitpy" client.
+
+    """
+    def __init__(self, username='guest', password='guest', host='localhost',
+                 port=5672, virtual_host='/'):
+        virtual_host = urllib.quote(virtual_host, '')
+
+        self.url = "amqp://{user}:{password}@{host}:{port}/{vhost}".format(
+                   user=username,
+                   password=password,
+                   host=host,
+                   port=port,
+                   vhost=virtual_host)
+        self._connection = None
+        self._channel = None
+
+    def connect(self):
+        """ Establish a connection to RabbitMQ """
+        self._connection = rabbitpy.Connection(self.url)
+        self._channel = self._connection.channel()
+        # self._channel.on_remote_close = self.on_remote_close
+
+    def close(self):
+        """ Close the RabbitMQ connection """
+        self._connection.close()
+
+    def on_remote_close(self, method):
+        log.warning("RabbitMQ closed: %s", method)
+        # Reconnect?
+        # self.connect()
+
+    def sleep(self, duration):
+        time.sleep(duration)
+
+    def put(self, queue_name, submission):
+        """ Push a submission on to the work queue """
+        if self._channel is None:
+            self.connect()
+
+        props = {'content_type': 'application/json'}
+        message = rabbitpy.Message(self._channel, json.dumps(submission), props)
+        message.publish('', queue_name)
+
+    def consume(self, queue_name, handler):
+        """ Poll a particular queue for submissions
+
+            :param str queue_name: queue to consume requests from
+            :param callable eval_callback: called when a submission is received
+
+        """
+        with rabbitpy.Connection(self.url) as conn:
+            with conn.channel() as channel:
+                queue = rabbitpy.Queue(channel, queue_name)
+                queue.durable = True
+                queue.declare()
+
+                # Consume the message
+                for message in queue.consume_messages():
+                    tag = message.delivery_tag
+                    log.info(" << Message %d consumed", tag)
+
+                    submission = message.json()
+                    response = handler(submission)
+
+                    if response:
+                        log.info(" * Message %d acknowledged!", tag)
+                        message.ack()
+                    else:
+                        log.error(" !! Message %d could not be evaluated: %s",
+                                  tag, submission)
+                        message.nack()

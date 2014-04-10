@@ -19,7 +19,7 @@ from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader, XQueueException
 from .xqueue import XQueueClient
-from .queues import RabbitMQueue
+from .queues import RabbitMQueue, RabbitPyQueue
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -259,7 +259,7 @@ class Grader(object):
         except KeyError as e:
             raise ImproperlyConfiguredGrader(e)
 
-        return RabbitMQueue(username, password, host, port, virtual_host)
+        return RabbitPyQueue(username, password, host, port, virtual_host)
 
     def evaluator(self, name):
         """ Returns a configured evaluator.
