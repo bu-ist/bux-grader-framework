@@ -136,7 +136,7 @@ class RabbitMQueue(object):
 
         try:
             channel.start_consuming()
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, SystemExit):
             channel.stop_consuming()
             raise
 
@@ -150,5 +150,6 @@ class RabbitMQueue(object):
         self._connection.sleep(duration)
 
     def close(self):
+        """ Close the RabbitMQ connection """
         if self._connection:
             self._connection.close()
