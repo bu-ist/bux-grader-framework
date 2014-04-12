@@ -8,6 +8,7 @@
 import importlib
 import logging
 import logging.config
+import multiprocessing
 import sys
 import time
 
@@ -60,6 +61,8 @@ class Grader(object):
         self._config = None
         self._evaluators = None
 
+        self._stop = multiprocessing.Event()
+
     def run(self):
         """ Starts the grader daemon
 
@@ -90,8 +93,15 @@ class Grader(object):
             while self.workers:
                 self.monitor()
                 time.sleep(self.config['MONITOR_INTERVAL'])
+
+                # Calling the `stop` method will trigger this event
+                if self._stop.is_set():
+                    break
         except (KeyboardInterrupt, SystemExit):
-            self.stop()
+            pass
+
+        # Clean up workers
+        self.close()
 
         log.info("All workers removed, stopping...")
 
@@ -167,6 +177,15 @@ class Grader(object):
         return worker
 
     def stop(self):
+        """ Sets a signal to break out of the `run` loop
+
+        Utilizes a ``multiprocessing.Event`` to allow stopping
+        grader from external process.
+
+        """
+        self._stop.set()
+
+    def close(self):
         """ Shuts down all worker processes """
         log.info("Shutting down worker processes: %s", self.workers)
         for worker in self.workers:

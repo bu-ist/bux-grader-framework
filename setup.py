@@ -13,7 +13,7 @@ setup(
     url='https://github.com/bu-ist/bux-grader-framework/',
     description='An external grader framework for the edX platform.',
     long_description=open('README.md').read(),
-    packages=['bux_grader_framework'],
+    packages=['bux_grader_framework', 'bux_grader_test_framework'],
     scripts=['bin/grader'],
     license='LICENSE',
     install_requires=['requests', 'pika']
