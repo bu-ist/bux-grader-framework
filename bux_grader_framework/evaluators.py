@@ -49,6 +49,14 @@ class BaseEvaluator(object):
         """
         pass
 
+    @abc.abstractmethod
+    def status(self):
+        """ Subclasses must implement with a method that asserts all
+        evaluator dependencies are met.
+
+        """
+        pass
+
 
 def registered_evaluators():
     """ Returns all subclasses of :class:`BaseEvaluator` """

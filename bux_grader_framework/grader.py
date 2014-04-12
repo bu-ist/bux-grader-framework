@@ -124,20 +124,37 @@ class Grader(object):
             log.info('Worker failed: %s', worker.name)
             self.workers.remove(worker)
 
-            # Create a new process using the same class / configuration
-            if type(worker) == XQueueWorker:
-                new_worker = self.restart_xqueue()
-                if not new_worker:
-                    sys.exit("Could not restart XQueue.")
-            elif type(worker) == EvaluatorWorker:
-                new_worker = EvaluatorWorker(worker.evaluator.name, self)
-
+            # Will block until worker can connect
+            new_worker = self.restart_worker(worker)
             if new_worker:
                 self.workers.append(new_worker)
                 log.info('Restarting worker: %s', new_worker.name)
                 new_worker.start()
             else:
                 log.error('Could not re-start worker: %s', worker.name)
+
+    def restart_worker(self, worker):
+        """ Attempts to restart worker process.
+
+        Will block until worker.status() returns true.
+
+        In the event of a upstream service outage (e.g. XQueue, RDS)
+        this may take a while.
+
+        """
+        # Create a new process using the same class / configuration
+        if type(worker) == XQueueWorker:
+            new_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
+        elif type(worker) == EvaluatorWorker:
+            new_worker = EvaluatorWorker(worker.evaluator.name, self)
+
+        # Wait until the worker has restarted
+        while not new_worker.status():
+            # TODO: Max wait time?
+            log.info("New worker cannot connect, waiting 5 secs...")
+            time.sleep(5)
+
+        return new_worker
 
     def restart_xqueue(self):
         """ Restarts XQueueWorker process on failure.

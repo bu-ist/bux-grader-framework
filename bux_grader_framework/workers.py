@@ -11,6 +11,8 @@ import time
 
 from string import Template
 
+from .exceptions import XQueueException
+
 log = logging.getLogger(__name__)
 
 
@@ -46,8 +48,6 @@ class XQueueWorker(multiprocessing.Process):
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
         self._default_evaluator = grader.config['DEFAULT_EVALUATOR']
         self.exit_signal = multiprocessing.Event()
-
-        self.xqueue.login()
 
     def run(self):
         """ Polls XQueue for submissions. """
@@ -126,6 +126,14 @@ class XQueueWorker(multiprocessing.Process):
         log.error("Could not handle submission #%d: %s", submit_id, reason)
         self.xqueue.put_result(submission, response)
 
+    def status(self):
+        log.info("Checking XQueue status...")
+        try:
+            status = self.xqueue.status()
+        except XQueueException:
+            return False
+        return status
+
     def close(self):
         """ Gracefully shuts down worker process """
         log.info("Closing...")
@@ -199,6 +207,10 @@ class EvaluatorWorker(multiprocessing.Process):
                  submission_id, elapsed_time)
 
         return True
+
+    def status(self):
+        log.info("Checking Evaluator status...")
+        return self.evaluator.status()
 
     def close(self):
         """ Gracefully shuts down worker process """

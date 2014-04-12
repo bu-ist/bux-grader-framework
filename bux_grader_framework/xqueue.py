@@ -191,6 +191,16 @@ class XQueueClient(object):
         log.debug("Succesfully posted result to XQueue.")
         return success
 
+    def status(self):
+        """ Checks service availability via /xqueue/status/ """
+        url = urlparse.urljoin(self.url, "/xqueue/status/")
+
+        success, content = self._request(url, 'get')
+        if not success:
+            error_msg = "Could check XQueue status: {}".format(content)
+            raise XQueueException(error_msg)
+        return True
+
     def _request(self, url, method='get', params=None, data=None,
                  retry_login=True):
         """ Thin wrapper around ``requests.request``.
