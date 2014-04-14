@@ -1,3 +1,4 @@
+import csv
 import multiprocessing
 import time
 
@@ -8,14 +9,15 @@ from .xqueue import XQueueStub
 
 
 class GraderTestRunner(object):
-    def __init__(self, settings_module, count=50):
+    def __init__(self, settings_module, count=50, resultfile='results.csv'):
         self.count = count
+        self.resultfile = resultfile
 
         self.xqueue = XQueueStub()
         self.grader = TestGrader(self.xqueue, settings_module)
 
     def run(self):
-        """ """
+        """ Run load tests """
         # Start the grader process
         self.grader.start()
 
@@ -34,10 +36,7 @@ class GraderTestRunner(object):
         print "%d submissions handled in %0.3f seconds" % (self.count, elapsed_time)
 
         # Gather results
-        # TODO: CSV output
-        for result in self.xqueue.get_results():
-            pass
-            # print result
+        self.generate_results_log()
         self.xqueue.results.close()
 
         # Terminate grader process
@@ -48,6 +47,7 @@ class GraderTestRunner(object):
         print "TestGrader stopped, exiting"
 
     def generate_submissions(self):
+        """ Generates ``self.count`` submissions """
         submit_num = 1
         while submit_num <= self.count:
             student_response, grader_payload = self.get_submission()
@@ -57,7 +57,7 @@ class GraderTestRunner(object):
             submit_num += 1
 
     def create_submission(self, submit_id, student_response, grader_payload):
-
+        """ Creats a properly formatted submission dict """
         pull_time = time.time()
         pullkey = make_hashkey(str(pull_time)+str(submit_id))
 
@@ -79,6 +79,14 @@ class GraderTestRunner(object):
     def get_submission(self):
         """ Subclasses must implement """
         pass
+
+    def generate_results_log(self):
+        """ Logs results to CSV """
+        print "Creating log file: %s" % self.resultfile
+        with open(self.resultfile, 'w') as f:
+            writer = csv.writer(f)
+            for result in self.xqueue.get_results():
+                writer.writerow(result)
 
 
 class TestGrader(multiprocessing.Process):

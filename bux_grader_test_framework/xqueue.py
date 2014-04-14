@@ -1,3 +1,4 @@
+import datetime
 import logging
 import multiprocessing
 import Queue
@@ -38,15 +39,21 @@ class XQueueStub(object):
         put_time = time.time()
         response_time = put_time - pull_time
 
+        utc_pull = datetime.datetime.utcfromtimestamp(pull_time)
+        utc_put = datetime.datetime.utcfromtimestamp(put_time)
+
         print "Response for %d received in %0.3f seconds" % (
               submission_id, response_time)
 
-        result = {
-            "response_time": response_time,
-            "submission_id": submission_id,
-            "submission": submission,
-            "result": result
-        }
+        result = (
+            submission_id,
+            response_time,
+            utc_pull,
+            utc_put,
+            submission['xqueue_body']['student_response'],
+            result['correct'],
+            result['score'],
+        )
         self.submissions.task_done()
         self.results.put(result)
 
