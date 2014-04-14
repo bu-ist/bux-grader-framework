@@ -90,10 +90,12 @@ class Grader(object):
             while self.workers:
                 self.monitor()
                 time.sleep(self.config['MONITOR_INTERVAL'])
-        except (KeyboardInterrupt, SystemExit):
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Ensure any running workers are terminated gracefully
+            # before exiting
             self.stop()
-
-        log.info("All workers removed, stopping...")
 
     def monitor(self):
         """ Monitors grader processes """
