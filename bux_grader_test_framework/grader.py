@@ -71,6 +71,9 @@ class GraderTestRunner(object):
         self.generate_results()
         self.xqueue.results.close()
 
+        print "Sleeping 5 seconds..."
+        time.sleep(5)
+
         # Terminate grader process
         print "Stopping grader..."
         self.grader.stop()

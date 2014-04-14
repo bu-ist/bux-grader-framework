@@ -178,7 +178,7 @@ class EvaluatorWorker(multiprocessing.Process):
 
         self.evaluator = self.grader.evaluator(evaluator)
         self.xqueue = self.grader.xqueue()
-        self.queue = self.grader.work_queue()
+        self.queue = self.grader.queue_consumer()
 
         # Attaches a callback handler for SIGTERM signals to
         # handle consumer canceling / connection closing
@@ -189,17 +189,9 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("'%s' evaluator (PID=%s) awaiting submissions...",
                  self.evaluator.name, self.pid)
 
-        self.queue.connect()
+        self.queue.run(self.evaluator.name, self.handle_submission)
 
-        try:
-            self.queue.consume(self.evaluator.name,
-                               self.handle_submission)
-        except (KeyboardInterrupt, SystemExit):
-            pass
-
-        self.queue.close()
-
-    def handle_submission(self, frame):
+    def handle_submission(self, frame, on_done, on_fail):
         """ Handles a submission popped off the internal work queue.
 
         Invokes ``self.evaluator.evaluate()`` to generate a response.
@@ -207,6 +199,7 @@ class EvaluatorWorker(multiprocessing.Process):
         """
         submission = frame["submission"]
         submission_id = submission['xqueue_header']['submission_id']
+        success = True
         log.info("Evaluating submission #%d", submission_id)
 
         try:
@@ -214,20 +207,24 @@ class EvaluatorWorker(multiprocessing.Process):
                 result = self.evaluator.evaluate(submission)
         except Exception:
             log.exception("Could not evaluate submission: %s", submission)
-            return False
+            success = False
 
-        try:
-            self.xqueue.put_result(submission, result)
-        except Exception:
-            log.exception("Could not post reply to XQueue.")
-            return False
+        if success and result:
+            try:
+                success = self.xqueue.put_result(submission, result)
+            except Exception:
+                log.exception("Could not post reply to XQueue.")
+                success = False
+
+        if success:
+            on_done()
+        else:
+            on_fail()
 
         elapsed_time = int((time.time() - frame["received_time"])*1000.0)
         statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
         log.info("Submission #%d evaluated in %0.3fms",
                  submission_id, elapsed_time)
-
-        return True
 
     def on_sigterm(self, signum, frame):
         """ Breaks out of run loop on SIGTERM """

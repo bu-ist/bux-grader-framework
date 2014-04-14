@@ -19,7 +19,7 @@ from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader, XQueueException
 from .xqueue import XQueueClient
-from .queues import RabbitMQueue
+from .queues import RabbitMQueue, AsyncConsumer
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -260,6 +260,26 @@ class Grader(object):
             raise ImproperlyConfiguredGrader(e)
 
         return RabbitMQueue(username, password, host, port, virtual_host)
+
+    def queue_consumer(self):
+        """ Returns a fresh :class:`WorkQueue` instance configured for this grader.
+
+            >>> work_queue = grader.work_queue()
+            >>> work_queue.get('test_queue')
+            >>> work_queue.put('test_queue', 'message')
+            >>> work_queue.consume('test_queue')
+
+        """
+        try:
+            username = self.config['RABBITMQ_USER']
+            password = self.config['RABBITMQ_PASSWORD']
+            host = self.config['RABBITMQ_HOST']
+            port = self.config['RABBITMQ_PORT']
+            virtual_host = self.config['RABBITMQ_VHOST']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return AsyncConsumer(username, password, host, port, virtual_host)
 
     def evaluator(self, name):
         """ Returns a configured evaluator.
