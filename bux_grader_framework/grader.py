@@ -97,13 +97,12 @@ class Grader(object):
                 # Calling the `stop` method will trigger this event
                 if self._stop.is_set():
                     break
-        except (KeyboardInterrupt, SystemExit):
+        except KeyboardInterrupt:
             pass
-
-        # Clean up workers
-        self.close()
-
-        log.info("All workers removed, stopping...")
+        finally:
+            # Ensure any running workers are terminated gracefully
+            # before exiting
+            self.close()
 
     def monitor(self):
         """ Monitors grader processes """
