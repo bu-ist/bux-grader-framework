@@ -12,6 +12,7 @@ import multiprocessing
 import Queue
 
 import pika
+import statsd
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,11 @@ class RabbitMQueue(object):
         self._connection = None
         self._channel = None
 
+        # Statsd counters
+        self.receive_count = statsd.Counter('sabermetrics.submissions.received')
+        self.succeed_count = statsd.Counter('sabermetrics.submissions.succeeded')
+        self.fail_count = statsd.Counter('sabermetrics.submissions.failed')
+
     def connect(self):
         """ Establish a connection to RabbitMQ """
         self._connection = pika.BlockingConnection(self.params)
@@ -103,6 +109,7 @@ class RabbitMQueue(object):
                               routing_key=queue_name,
                               body=json.dumps(submission),
                               properties=properties)
+        self.receive_count += 1
 
     def consume(self, queue_name, eval_callback):
         """ Poll a particular queue for submissions
@@ -125,12 +132,14 @@ class RabbitMQueue(object):
             if response:
                 log.info(" * Message %d acknowledged!", tag)
                 ch.basic_ack(delivery_tag=tag)
+                self.succeed_count += 1
             else:
                 log.error(" !! Message %d could not be evaluated: %s",
                           tag, submission)
 
                 # TODO: Establish a procedure for recovering failed submissions
                 ch.basic_nack(delivery_tag=tag, requeue=False)
+                self.fail_count += 1
 
         channel.basic_consume(on_message_received, queue_name)
 

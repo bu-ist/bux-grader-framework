@@ -39,3 +39,6 @@ from .evaluators import registered_evaluators, BaseEvaluator
 from .grader import Grader
 from .workers import EvaluatorWorker, XQueueWorker
 from .xqueue import XQueueClient
+
+import statsd
+statsd.Connection.set_defaults(host='10.0.2.2', port=8125, sample_rate=1, disabled=False)

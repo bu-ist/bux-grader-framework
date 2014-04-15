@@ -11,6 +11,8 @@ import signal
 import sys
 import time
 
+import statsd
+
 from string import Template
 
 log = logging.getLogger(__name__)
@@ -192,7 +194,10 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("Evaluating submission #%d", submission_id)
 
         try:
+            timer = statsd.Timer('sabermetrics.handle_submission')
+            timer.start()
             result = self.evaluator.evaluate(submission)
+            timer.stop('evaluate')
         except Exception:
             log.exception("Could not evaluate submission: %s", submission)
             return False
