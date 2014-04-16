@@ -12,6 +12,7 @@ import sys
 import time
 
 from string import Template
+from statsd import statsd
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class XQueueWorker(multiprocessing.Process):
 
     def enqueue_submission(self, submission):
         """ Adds a submision popped from XQueue to an internal work queue. """
+        frame = {"received_by": self.pid, "received_time": time.time()}
         header = submission['xqueue_header']
         payload = submission['xqueue_body']['grader_payload']
 
@@ -108,8 +110,9 @@ class XQueueWorker(multiprocessing.Process):
 
         # Ensure evaluator is registered with this grader
         if evaluator and self.grader.is_registered_evaluator(evaluator):
+            frame["submission"] = submission
             # Push to evaluator work queue
-            self.queue.put(evaluator, submission)
+            self.queue.put(evaluator, frame)
         else:
             # Notify LMS that the submission could not be handled
             self.push_failure("Evaluator could not be found: {}".format(
@@ -180,14 +183,13 @@ class EvaluatorWorker(multiprocessing.Process):
 
         self.queue.close()
 
-    def handle_submission(self, submission):
+    def handle_submission(self, frame):
         """ Handles a submission popped off the internal work queue.
 
         Invokes ``self.evaluator.evaluate()`` to generate a response.
 
         """
-        time_start = time.time()
-
+        submission = frame["submission"]
         submission_id = submission['xqueue_header']['submission_id']
         log.info("Evaluating submission #%d", submission_id)
 
@@ -203,8 +205,8 @@ class EvaluatorWorker(multiprocessing.Process):
             log.exception("Could not post reply to XQueue.")
             return False
 
-        time_stop = time.time()
-        elapsed_time = (time_stop - time_start)*1000.0
+        elapsed_time = int((time.time() - frame["received_time"])*1000.0)
+        statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
         log.info("Submission #%d evaluated in %0.3fms",
                  submission_id, elapsed_time)
 

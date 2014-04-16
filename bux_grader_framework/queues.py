@@ -92,8 +92,9 @@ class RabbitMQueue(object):
 
     def put(self, queue_name, submission):
         """ Push a submission on to the work queue """
+        submission_id = submission["submission"]["xqueue_header"]["submission_id"]
         log.info(" >> Enqueueing submisson #%d to '%s' queue",
-                 submission["xqueue_header"]["submission_id"], queue_name)
+                 submission_id, queue_name)
 
         channel = self.get_channel()
         channel.queue_declare(queue=queue_name, durable=True)
