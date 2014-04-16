@@ -9,9 +9,9 @@ import json
 import logging
 import urlparse
 
-import statsd
 import requests
 from requests.exceptions import Timeout, HTTPError, ConnectionError
+from statsd import statsd
 
 from .exceptions import (XQueueException,
                          BadCredentials, BadQueueName,
@@ -75,10 +75,9 @@ class XQueueClient(object):
 
         self.session = requests.session()
 
+    @statsd.timer('bux_grader_framework.xqueue.login')
     def login(self):
         """ Login to XQueue."""
-        timer = statsd.Timer('sabermetrics.xqueue')
-        timer.start()
         url = urlparse.urljoin(self.url, "/xqueue/login/")
         post_data = {"username": self.username, "password": self.password}
 
@@ -92,9 +91,9 @@ class XQueueClient(object):
                 raise XQueueException(error_msg)
 
         log.debug("Succesfully logged in as {}".format(self.username))
-        timer.stop('login')
         return success
 
+    @statsd.timer('bux_grader_framework.xqueue.get_queuelen')
     def get_queuelen(self, queue_name):
         """ Returns the current queue length.
 
@@ -103,8 +102,6 @@ class XQueueClient(object):
                      is invalid
 
         """
-        timer = statsd.Timer('sabermetrics.xqueue')
-        timer.start()
         log.debug("Fetching queue length for \"{}\"".format(queue_name))
         url = urlparse.urljoin(self.url, "/xqueue/get_queuelen/")
         params = {"queue_name": queue_name}
@@ -120,9 +117,9 @@ class XQueueClient(object):
         queuelen = int(content)
         log.debug("Retrieved queue length for \"{}\": {}".format(queue_name,
                                                                  queuelen))
-        timer.stop('get_queuelen')
         return queuelen
 
+    @statsd.timer('bux_grader_framework.xqueue.get_submission')
     def get_submission(self, queue_name):
         """ Pop a submission off of XQueue.
 
@@ -133,8 +130,6 @@ class XQueueClient(object):
             Returns a submission :class:`dict` or :class:`None`.
 
         """
-        timer = statsd.Timer('sabermetrics.xqueue')
-        timer.start()
         log.debug("Fetching submission from \"{}\"".format(queue_name))
         url = urlparse.urljoin(self.url, "/xqueue/get_submission/")
         params = {"queue_name": queue_name}
@@ -156,11 +151,11 @@ class XQueueClient(object):
         log.debug("Retrieved submission from \"{}\": {}".format(queue_name,
                                                                 submission))
 
-        timer.stop('get_submission')
         return {"xqueue_header": header,
                 "xqueue_body": body,
                 "xqueue_files": files}
 
+    @statsd.timer('bux_grader_framework.xqueue.put_result')
     def put_result(self, submission, result):
         """ Posts a result to XQueue.
 
@@ -185,8 +180,6 @@ class XQueueClient(object):
                 accept the response.
 
         """
-        timer = statsd.Timer('sabermetrics.xqueue')
-        timer.start()
         log.debug("Posting result to XQueue: {}".format(result))
         url = urlparse.urljoin(self.url, "/xqueue/put_result/")
 
@@ -202,7 +195,6 @@ class XQueueClient(object):
             raise InvalidGraderReply(content)
 
         log.debug("Succesfully posted result to XQueue.")
-        timer.stop('put_result')
         return success
 
     def _request(self, url, method='get', params=None, data=None,
