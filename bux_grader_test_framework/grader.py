@@ -1,5 +1,6 @@
 import csv
 import multiprocessing
+import random
 import time
 
 from bux_grader_framework import Grader
@@ -9,23 +10,52 @@ from .xqueue import XQueueStub
 
 
 class GraderTestRunner(object):
-    def __init__(self, settings_module, count=50, resultfile='results.csv'):
+    def __init__(self, settings_module, count=50, submissions_per_second=10,
+                 simulation=False, resultfile='results.csv'):
         self.count = count
+        self.submissions_per_second = submissions_per_second
+        self.simulation = simulation
         self.resultfile = resultfile
 
-        self.xqueue = XQueueStub()
+        # Time to wait between submississions
+        self.submission_delay = 1.0 / submissions_per_second
+
+        self.xqueue = XQueueStub(simulation=self.simulation)
         self.grader = TestGrader(self.xqueue, settings_module)
 
     def run(self):
         """ Run load tests """
+
+        # TODO: Generate a run number based on current time
+
+        # Stats
+        print "Starting grader load tests"
+        if self.simulation:
+            print "Simulation mode: ON"
+        else:
+            print "Simulation mode: OFF"
+            print "Submission rate: %d/s" % self.submissions_per_second
+
         # Start the grader process
+        print "Starting grader..."
         self.grader.start()
+
+        # Sleep for a few seconds to give the grader time to initialize
+        print "Waiting 5 seconds for grader to initialize..."
+        time.sleep(5)
 
         time_start = time.time()
 
         # Generate test submissions
+        print "Generating %d submissions..." % self.count
         for submission in self.generate_submissions():
             self.xqueue.submit(submission)
+
+            # Simulate random delays between submissions
+            if self.simulation:
+                time.sleep(random.uniform(0.1, 0.5))
+            else:
+                time.sleep(self.submission_delay)
 
         print "Waiting for all submissions to be handled..."
         self.xqueue.submissions.join()
@@ -33,18 +63,20 @@ class GraderTestRunner(object):
 
         time_stop = time.time()
         elapsed_time = time_stop - time_start
-        print "%d submissions handled in %0.3f seconds" % (self.count, elapsed_time)
+        print "%d submissions handled in %0.3f seconds" % (self.count,
+                                                           elapsed_time)
 
         # Gather results
-        self.generate_results_log()
+        print "Generating results..."
+        self.generate_results()
         self.xqueue.results.close()
 
         # Terminate grader process
-        print "Stopping TestGrader..."
+        print "Stopping grader..."
         self.grader.stop()
-        print "Waiting for TestGrader to finish..."
         self.grader.join()
-        print "TestGrader stopped, exiting"
+
+        print "Load tests completed."
 
     def generate_submissions(self):
         """ Generates ``self.count`` submissions """
@@ -80,7 +112,7 @@ class GraderTestRunner(object):
         """ Subclasses must implement """
         pass
 
-    def generate_results_log(self):
+    def generate_results(self):
         """ Logs results to CSV """
         print "Creating log file: %s" % self.resultfile
         with open(self.resultfile, 'w') as f:
@@ -113,5 +145,4 @@ class TestGrader(multiprocessing.Process):
         print "Grader exited"
 
     def stop(self):
-        print "Sending stop event to Grader"
         self.grader.stop()

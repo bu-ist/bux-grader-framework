@@ -3,6 +3,7 @@ import logging
 import multiprocessing
 import Queue
 import time
+import random
 
 
 log = logging.getLogger(__name__)
@@ -13,9 +14,10 @@ class XQueueStub(object):
         to keep track of submissions / posted results.
 
     """
-    def __init__(self):
+    def __init__(self, simulation=False):
         self.submissions = multiprocessing.JoinableQueue()
         self.results = multiprocessing.Queue()
+        self.simulation = simulation
 
     def login(self):
         return True
@@ -24,15 +26,36 @@ class XQueueStub(object):
         self.submissions.put(submission)
 
     def get_queuelen(self, queue_name):
+
+        # /xqueue/get_queuelen/ typically finishes in under 150ms
+        if self.simulation:
+            time.sleep(random.uniform(0.09, 0.15))
+        else:
+            time.sleep(0.125)
+
         return self.submissions.qsize()
 
     def get_submission(self, queue_name):
+
+        # /xqueue/get_submission/ typically finishes in under 200ms
+        if self.simulation:
+            time.sleep(random.uniform(0.1, 0.2))
+        else:
+            time.sleep(0.2)
+
         try:
             return self.submissions.get()
         except Queue.Empty:
             return None
 
     def put_result(self, submission, result):
+
+        # /xqueue/put_result/ typically finishes in under 400ms
+        if self.simulation:
+            time.sleep(random.uniform(0.2, 0.4))
+        else:
+            time.sleep(0.3)
+
         submission_id = submission['xqueue_header']['submission_id']
 
         pull_time = submission['xqueue_body']['submission_info']['submission_time']
