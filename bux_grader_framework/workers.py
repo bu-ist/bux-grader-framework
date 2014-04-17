@@ -198,7 +198,7 @@ class EvaluatorWorker(multiprocessing.Process):
             return False
 
         try:
-            self.xqueue.put_result(submission, result)
+            success = self.xqueue.put_result(submission, result)
         except Exception:
             log.exception("Could not post reply to XQueue.")
             return False
@@ -208,7 +208,7 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("Submission #%d evaluated in %0.3fms",
                  submission_id, elapsed_time)
 
-        return True
+        return success
 
     def on_sigterm(self, signum, frame):
         """ Breaks out of run loop on SIGTERM """
