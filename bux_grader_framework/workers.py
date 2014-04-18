@@ -90,7 +90,23 @@ class XQueueWorker(multiprocessing.Process):
 
     def enqueue_submission(self, submission):
         """ Adds a submision popped from XQueue to an internal work queue. """
-        frame = {"received_by": self.pid, "received_time": time.time()}
+
+        received_time = time.time()
+        submit_time = submission['xqueue_body']['student_info']['submission_time']
+
+        # For load testing:
+        #
+        #   The load test suite uses timestamps for submission_time. The LMS uses
+        #   a formatted date string. This block only logs submission delays when the
+        #   former is being used as the date string resolution isn't high enough to
+        #   be useful.
+        #
+        if isinstance(submit_time, float):
+            delay = int((received_time - submit_time)*1000.0)
+            log.info("Submitted: %d Received: %d Delay: %d", submit_time, received_time, delay)
+            statsd.timing('bux_grader_framework.get_submission_delay', delay)
+
+        frame = {"received_by": self.pid, "received_time": received_time}
         header = submission['xqueue_header']
         payload = submission['xqueue_body']['grader_payload']
 

@@ -90,6 +90,16 @@ class GraderTestRunner(object):
 
     def create_submission(self, submit_id, student_response, grader_payload):
         """ Creats a properly formatted submission dict """
+
+        # The LMS generates the ``submission_time`` when a submission is
+        # created as a formatted string:
+        #
+        #   from datetime import datetime
+        #   datetime.strftime(datetime.now(UTC), '%Y%m%d%H%M%S')
+        #
+        # We use timestamps here instead for higher resolution. We use it to
+        # log the delay between creation and reception in the ``XQueueWorker``.
+
         pull_time = time.time()
         pullkey = make_hashkey(str(pull_time)+str(submit_id))
 
@@ -101,7 +111,7 @@ class GraderTestRunner(object):
             "xqueue_body": {
                 "student_response": student_response,
                 "grader_payload": grader_payload,
-                "submission_info": {
+                "student_info": {
                     "submission_time": pull_time
                 }
             },

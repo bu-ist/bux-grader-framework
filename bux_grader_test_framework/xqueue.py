@@ -62,7 +62,7 @@ class XQueueStub(object):
 
         submission_id = submission['xqueue_header']['submission_id']
 
-        pull_time = submission['xqueue_body']['submission_info']['submission_time']
+        pull_time = submission['xqueue_body']['student_info']['submission_time']
         put_time = time.time()
         response_time = int((put_time - pull_time)*1000.0)
         statsd.timing('bux_grader_test_framework.response_time', response_time)
