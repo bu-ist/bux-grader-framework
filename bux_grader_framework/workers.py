@@ -194,7 +194,8 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("Evaluating submission #%d", submission_id)
 
         try:
-            result = self.evaluator.evaluate(submission)
+            with statsd.timer('bux_grader_framework.evaluate'):
+                result = self.evaluator.evaluate(submission)
         except Exception:
             log.exception("Could not evaluate submission: %s", submission)
             return False
