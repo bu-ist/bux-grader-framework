@@ -5,6 +5,7 @@
     This module defines work queues utilized by the evalutator workers.
 """
 
+import functools
 import json
 import logging
 import time
@@ -213,15 +214,17 @@ class RabbitPyQueue(object):
         message = rabbitpy.Message(self._channel, json.dumps(submission), props)
         message.publish('', queue_name)
 
-    def consume(self, queue_name, handler):
+    def consume(self, queue_name, eval_callback, prefetch):
         """ Poll a particular queue for submissions
 
             :param str queue_name: queue to consume requests from
             :param callable eval_callback: called when a submission is received
+            :param int prefetch: queue prefetch count
 
         """
         with rabbitpy.Connection(self.url) as conn:
             with conn.channel() as channel:
+                channel.prefetch_count(prefetch)
                 queue = rabbitpy.Queue(channel, queue_name)
                 queue.durable = True
                 queue.declare()
@@ -232,12 +235,21 @@ class RabbitPyQueue(object):
                     log.info(" << Message %d consumed", tag)
 
                     submission = message.json()
-                    response = handler(submission)
+                    callback = functools.partial(self.on_complete, message)
+                    eval_callback(submission, callback)
 
-                    if response:
-                        log.info(" * Message %d acknowledged!", tag)
-                        message.ack()
-                    else:
-                        log.error(" !! Message %d could not be evaluated: %s",
-                                  tag, submission)
-                        message.nack()
+    def on_complete(self, message, success):
+        """ Responds to RabbitMQ after a submission is handled.
+
+        This method is called to the evaluator thread, which will pass in
+        the result of the submission handling.
+
+        """
+        if success:
+            log.info(" >> Message %d ack'd", message.delivery_tag)
+            message.ack()
+            statsd.incr('bux_grader_framework.submissions.success')
+        else:
+            log.error(" >> Message %d nack'd", message.delivery_tag)
+            message.nack()
+            statsd.incr('bux_grader_framework.submissions.failure')
