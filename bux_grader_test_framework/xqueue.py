@@ -5,6 +5,8 @@ import Queue
 import time
 import random
 
+from statsd import statsd
+
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +25,7 @@ class XQueueStub(object):
         return True
 
     def submit(self, submission):
+        statsd.incr('bux_grader_test_framework.submissions.sent')
         self.submissions.put(submission)
 
     def get_queuelen(self, queue_name):
@@ -44,6 +47,7 @@ class XQueueStub(object):
             time.sleep(0.2)
 
         try:
+            statsd.incr('bux_grader_test_framework.submissions.received')
             return self.submissions.get()
         except Queue.Empty:
             return None
@@ -60,13 +64,13 @@ class XQueueStub(object):
 
         pull_time = submission['xqueue_body']['submission_info']['submission_time']
         put_time = time.time()
-        response_time = put_time - pull_time
+        response_time = int((put_time - pull_time)*1000.0)
+        statsd.timing('bux_grader_test_framework.response_time', response_time)
+        print "Response for %d received in %0.3f ms" % (
+              submission_id, response_time)
 
         utc_pull = datetime.datetime.utcfromtimestamp(pull_time)
         utc_put = datetime.datetime.utcfromtimestamp(put_time)
-
-        print "Response for %d received in %0.3f seconds" % (
-              submission_id, response_time)
 
         result = (
             submission_id,
@@ -77,8 +81,10 @@ class XQueueStub(object):
             result['correct'],
             result['score'],
         )
+        statsd.incr('bux_grader_test_framework.submissions.completed')
         self.submissions.task_done()
         self.results.put(result)
+        return True
 
     def get_results(self):
         while self.results.qsize() > 0:
