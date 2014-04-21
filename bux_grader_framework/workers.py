@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 
+from multiprocessing.dummy import Pool
+
 from string import Template
 from statsd import statsd
 
@@ -193,24 +195,24 @@ class EvaluatorWorker(multiprocessing.Process):
                  self.evaluator.name, self.pid)
 
         self.queue.connect()
+        self.pool = Pool(processes=self.EVAL_THREAD_COUNT)
 
         try:
             self.queue.consume(self.evaluator.name,
-                               self.spawn_evaluator_thread,
-                               self.EVAL_THREAD_COUNT)
+                               self.spawn_evaluator_thread)
         except (KeyboardInterrupt, SystemExit):
             pass
 
+        self.pool.close()
+        self.pool.join()
         self.queue.close()
 
     def spawn_evaluator_thread(self, frame, on_complete):
         """ Spawns a thread to handle received submissions """
-        thread = threading.Thread(target=self.handle_submission,
-                                  args=(frame, on_complete))
-        thread.daemon = True
-        thread.start()
+        self.pool.apply_async(self.handle_submission, (frame,),
+                              callback=on_complete)
 
-    def handle_submission(self, frame, on_complete):
+    def handle_submission(self, frame):
         """ Handles a submission popped off the internal work queue.
 
         Invokes ``self.evaluator.evaluate()`` to generate a response.
@@ -238,8 +240,7 @@ class EvaluatorWorker(multiprocessing.Process):
         elapsed_time = int((time.time() - frame["received_time"])*1000.0)
         statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
 
-        # Notifies queue to ack / nack message
-        on_complete(success)
+        return success
 
     def on_sigterm(self, signum, frame):
         """ Breaks out of run loop on SIGTERM """
