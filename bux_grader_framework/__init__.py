@@ -34,6 +34,10 @@ DEFAULT_LOGGING = {
     },
 }
 
+import os
+os.environ['STATSD_HOST'] = os.environ.get('STATSD_HOST', '127.0.0.1')
+os.environ['STATSD_PORT'] = os.environ.get('STATSD_PORT', '8125')
+
 from .conf import Config
 from .evaluators import registered_evaluators, BaseEvaluator
 from .grader import Grader
