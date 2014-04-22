@@ -75,7 +75,6 @@ class XQueueClient(object):
 
         self.session = requests.session()
 
-    @statsd.timer('bux_grader_framework.xqueue.login')
     def login(self):
         """ Login to XQueue."""
         url = urlparse.urljoin(self.url, "/xqueue/login/")
@@ -93,7 +92,6 @@ class XQueueClient(object):
         log.debug("Succesfully logged in as {}".format(self.username))
         return success
 
-    @statsd.timer('bux_grader_framework.xqueue.get_queuelen')
     def get_queuelen(self, queue_name):
         """ Returns the current queue length.
 
@@ -106,7 +104,9 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_queuelen/")
         params = {"queue_name": queue_name}
 
-        success, content = self._request(url, "get", params=params)
+        with statsd.timer('bux_grader_framework.xqueue.get_queuelen'):
+            success, content = self._request(url, "get", params=params)
+
         if not success:
             error_msg = "Could not get queue length: {}".format(content)
             if content.startswith("Valid queue names are"):
@@ -119,7 +119,6 @@ class XQueueClient(object):
                                                                  queuelen))
         return queuelen
 
-    @statsd.timer('bux_grader_framework.xqueue.get_submission')
     def get_submission(self, queue_name):
         """ Pop a submission off of XQueue.
 
@@ -134,7 +133,9 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_submission/")
         params = {"queue_name": queue_name}
 
-        success, content = self._request(url, 'get', params=params)
+        with statsd.timer('bux_grader_framework.xqueue.get_submission'):
+            success, content = self._request(url, 'get', params=params)
+
         if not success:
             error_msg = "Could not get submission: {}".format(content)
             if self.QUEUE_NOT_FOUND_MSG % queue_name == content:
@@ -155,7 +156,6 @@ class XQueueClient(object):
                 "xqueue_body": body,
                 "xqueue_files": files}
 
-    @statsd.timer('bux_grader_framework.xqueue.put_result')
     def put_result(self, submission, result):
         """ Posts a result to XQueue.
 
@@ -189,7 +189,9 @@ class XQueueClient(object):
             "xqueue_body": json.dumps(result)
         }
 
-        success, content = self._request(url, 'post', data=post_data)
+        with statsd.timer('bux_grader_framework.xqueue.put_result'):
+            success, content = self._request(url, 'post', data=post_data)
+
         if not success:
             log.error("Could not post result: {}".format(content))
             raise InvalidGraderReply(content)
