@@ -199,7 +199,8 @@ class EvaluatorWorker(multiprocessing.Process):
 
         try:
             self.queue.consume(self.evaluator.name,
-                               self.spawn_evaluator_thread)
+                               self.spawn_evaluator_thread,
+                               self.EVAL_THREAD_COUNT)
         except (KeyboardInterrupt, SystemExit):
             pass
 
