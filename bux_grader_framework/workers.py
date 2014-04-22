@@ -11,6 +11,8 @@ import signal
 import sys
 import time
 
+from multiprocessing.dummy import Pool
+
 from string import Template
 from statsd import statsd
 
@@ -46,6 +48,7 @@ class XQueueWorker(multiprocessing.Process):
         self.xqueue = grader.xqueue()
         self.queue = grader.work_queue()
 
+        self._xqueue_pool_size = grader.config['XQUEUE_POOL_SIZE']
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
         self._default_evaluator = grader.config['DEFAULT_EVALUATOR']
 
@@ -61,35 +64,47 @@ class XQueueWorker(multiprocessing.Process):
                  self.pid)
 
         self.queue.connect()
+        self.pool = Pool(processes=self._xqueue_pool_size)
 
         try:
             while not self._stop.is_set():
                 # Pop any pending submissions and transfer to work queue
-                for submission in self.get_submissions():
-                    self.enqueue_submission(submission)
+                submit_count = self.xqueue.get_queuelen(self.queue_name)
 
-                # Sleep once all submissions are transferred
-                # Uses queue.sleep which pings RabbitMQ to prevent
-                # heartbeat_interval-related timeouts.
-                self.queue.sleep(self._poll_interval)
+                if submit_count:
+                    self.get_submissions(submit_count)
+                else:
+                    # Sleep if no submissions are present
+                    # Uses queue.sleep which pings RabbitMQ to prevent
+                    # heartbeat_interval-related timeouts.
+                    self.queue.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
             pass
 
+        self.pool.close()
+        self.pool.join()
         self.queue.close()
 
-    def get_submissions(self):
-        """ Submission generator """
-        if self.xqueue.get_queuelen(self.queue_name):
-            has_submissions = True
-            while has_submissions:
-                submission = self.xqueue.get_submission(self.queue_name)
-                if submission:
-                    yield submission
-                else:
-                    has_submissions = False
+    def get_submissions(self, submit_count):
+        """ Fetches submission from XQueue asynchronously """
+        fetched = 0
+        while fetched < submit_count:
+            self.pool.apply_async(self.xqueue.get_submission,
+                                  (self.queue_name,),
+                                  callback=self.enqueue_submission)
+            fetched += 1
 
     def enqueue_submission(self, submission):
-        """ Adds a submision popped from XQueue to an internal work queue. """
+        """ Adds a submision popped from XQueue to an internal work queue.
+
+        This method is called by ``apply_async`` when an XQueue submission
+        request has completed.
+
+        """
+
+        # Bail early if no submission was received
+        if not submission:
+            return
 
         received_time = time.time()
         submit_time = submission['xqueue_body']['student_info']['submission_time']
