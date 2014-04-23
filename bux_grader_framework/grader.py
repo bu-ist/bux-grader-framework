@@ -48,6 +48,7 @@ class Grader(object):
         "XQUEUE_RETRY_INTERVAL": 5,
         "XQUEUE_POOL_SIZE": 6,
         "WORKER_COUNT": 2,
+        "EVAL_THREAD_COUNT": 10,
         "MONITOR_INTERVAL": 1,
         "RABBITMQ_USER": "guest",
         "RABBITMQ_PASSWORD": "guest",

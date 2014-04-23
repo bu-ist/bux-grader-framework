@@ -187,8 +187,6 @@ class EvaluatorWorker(multiprocessing.Process):
         requeued.
 
     """
-    EVAL_THREAD_COUNT = 12
-
     def __init__(self, evaluator, grader):
         super(EvaluatorWorker, self).__init__()
 
@@ -197,6 +195,8 @@ class EvaluatorWorker(multiprocessing.Process):
         self.evaluator = self.grader.evaluator(evaluator)
         self.xqueue = self.grader.xqueue()
         self.queue = self.grader.work_queue()
+
+        self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
 
         # Attaches a callback handler for SIGTERM signals to
         # handle consumer canceling / connection closing
@@ -208,12 +208,12 @@ class EvaluatorWorker(multiprocessing.Process):
                  self.evaluator.name, self.pid)
 
         self.queue.connect()
-        self.pool = Pool(processes=self.EVAL_THREAD_COUNT)
+        self.pool = Pool(processes=self._eval_thread_count)
 
         try:
             self.queue.consume(self.evaluator.name,
                                self.spawn_evaluator_thread,
-                               self.EVAL_THREAD_COUNT)
+                               self._eval_thread_count)
         except (KeyboardInterrupt, SystemExit):
             pass
 
