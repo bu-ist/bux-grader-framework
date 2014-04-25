@@ -195,6 +195,8 @@ class EvaluatorWorker(multiprocessing.Process):
         self.xqueue = self.grader.xqueue()
         self.queue = self.grader.queue_consumer()
 
+        self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
+
         # Attaches a callback handler for SIGTERM signals to
         # handle consumer canceling / connection closing
         signal.signal(signal.SIGTERM, self.on_sigterm)
@@ -204,9 +206,11 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("'%s' evaluator (PID=%s) awaiting submissions...",
                  self.evaluator.name, self.pid)
 
-        self.queue.run(self.evaluator.name, self.handle_submission)
+        self.queue.consume(self.evaluator.name,
+                           self.handle_submission,
+                           self._eval_thread_count)
 
-    def handle_submission(self, frame, on_done, on_fail):
+    def handle_submission(self, frame, on_complete):
         """ Handles a submission popped off the internal work queue.
 
         Invokes ``self.evaluator.evaluate()`` to generate a response.
@@ -231,10 +235,8 @@ class EvaluatorWorker(multiprocessing.Process):
                 log.exception("Could not post reply to XQueue.")
                 success = False
 
-        if success:
-            on_done()
-        else:
-            on_fail()
+        # Notifies queue to ack / nack message
+        on_complete(success)
 
         elapsed_time = int((time.time() - frame["received_time"])*1000.0)
         statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)

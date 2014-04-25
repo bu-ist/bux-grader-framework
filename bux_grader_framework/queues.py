@@ -5,6 +5,7 @@
     This module defines work queues utilized by the evalutator workers.
 """
 
+import functools
 import json
 import logging
 import multiprocessing
@@ -219,75 +220,72 @@ class AsyncConsumer(object):
         # acknowledged. Because we are using a thread to process each
         # message, the prefecth count also determines the maximum
         # number of processing threads running at the same time.
-        prefetch_count = self.MAX_THREADS
-        channel.basic_qos(prefetch_count=prefetch_count)
+        channel.basic_qos(prefetch_count=self.prefetch_count)
 
         channel.queue_declare(queue=self.queue_name,
                               durable=True,
                               callback=self.on_queue_declared)
 
     def on_queue_declared(self, frame):
-        self.channel.basic_consume(self._callback, queue=self.queue_name)
+        self.channel.basic_consume(self.on_message_received, queue=self.queue_name)
 
-    def run(self, queue_name, submission_handler):
+    def consume(self, queue_name, submission_handler, prefetch_count):
+        """ Main consumer method """
         # Queue to consume submissions from
         self.queue_name = queue_name
 
         # Callback method for handling submissions
         self.submission_handler = submission_handler
 
-        log.info(" [{id}] Starting consumer for queue {queue}".format(
-            id=multiprocessing.current_process(),
+        # Limit incoming messages to this amount
+        self.prefetch_count = prefetch_count
+
+        log.info("Starting consumer for queue {queue}".format(
             queue=self.queue_name,
         ))
 
         try:
             self.connection = self.connect()
             self.connection.ioloop.start()
-        except pika.exceptions.AMQPConnectionError as ex:
-            log.error("[{id}] Consumer for queue {queue} connection error: {err}".format(
-                id=multiprocessing.current_process(), queue=self.queue_name, err=ex))
+        except pika.exceptions.AMQPConnectionError:
+            log.exception("Consumer for queue {queue} connection error".format(
+                          queue=self.queue_name))
             raise
         else:
             # Log that the worker exited without an exception
-            log.info(" [{id}] Consumer for queue {queue} is exiting normally...".format(
-                id=multiprocessing.current_process(), queue=self.queue_name))
+            log.info("Consumer for queue {queue} is exiting normally...".format(
+                     queue=self.queue_name))
         finally:
             # Log that the worker stopped
-            log.info(" [{id}] Consumer for queue {queue} stopped".format(
-                id=multiprocessing.current_process(), queue=self.queue_name))
-
-        # TODO [rocha] make to to finish all submissions before exiting
+            log.info("Consumer for queue {queue} stopped".format(
+                     queue=self.queue_name))
 
     def stop(self):
         """ Stop the worker from processing messages """
         self.connection.close()
 
-    def _callback(self, channel, method, properties, body):
+    def on_message_received(self, channel, method, properties, body):
+        tag = method.delivery_tag
+        log.info(" << Message %d consumed", tag)
         frame = json.loads(body)
-        submission = frame["submission"]
-        submission_id = submission['xqueue_header']['submission_id']
-
-        def on_done():
-            # Acknowledge the delivery of the message in the ioloop of
-            # the current connection. basic_ack is not thread safe,
-            # and calling it outside of the ioloop thread will cause
-            # an error, and the message will never be acknowledged.
-            log.info("[%s] Acknowledged submission %d",
-                     threading.current_thread(), submission_id)
-            ack = lambda: channel.basic_ack(delivery_tag=method.delivery_tag)
-            self.connection.add_timeout(0, ack)
-
-        def on_fail():
-            log.error("[%s] Nacking submission %d",
-                      threading.current_thread(), submission_id)
-            nack = lambda: channel.basic_nack(delivery_tag=method.delivery_tag)
-            self.connection.add_timeout(0, nack)
+        on_complete = functools.partial(self.on_complete, channel, tag)
 
         # process the submission in a different thread to avoid
         # blocking pika's ioloop, which can cause disconnects and
         # other errors
         thread = threading.Thread(target=self.submission_handler,
-                                  args=(frame, on_done, on_fail))
+                                  args=(frame, on_complete))
         thread.daemon = True
         thread.start()
+
+    def on_complete(self, channel, tag, success):
+        if success:
+            log.info(" >> Message %d ack'd", tag)
+            ack = lambda: channel.basic_ack(delivery_tag=tag)
+            self.connection.add_timeout(0, ack)
+            statsd.incr('bux_grader_framework.submissions.success')
+        else:
+            log.info(" >> Message %d nack'd", tag)
+            nack = lambda: channel.basic_ack(delivery_tag=tag)
+            self.connection.add_timeout(0, nack)
+            statsd.incr('bux_grader_framework.submissions.failure')
