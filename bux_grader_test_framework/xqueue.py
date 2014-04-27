@@ -26,7 +26,7 @@ class XQueueStub(object):
 
     def submit(self, submission):
         statsd.incr('bux_grader_test_framework.submissions.sent')
-        self.submissions.put(submission)
+        self.submissions.put_nowait(submission)
 
     def get_queuelen(self, queue_name):
 
@@ -47,8 +47,9 @@ class XQueueStub(object):
             time.sleep(0.2)
 
         try:
+            submission = self.submissions.get_nowait()
             statsd.incr('bux_grader_test_framework.submissions.received')
-            return self.submissions.get()
+            return submission
         except Queue.Empty:
             return None
 
