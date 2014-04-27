@@ -5,10 +5,12 @@
     This module defines work queues utilized by the evalutator workers.
 """
 
+import functools
 import json
 import logging
-import time
 import multiprocessing
+import time
+import threading
 import Queue
 
 import pika
@@ -159,3 +161,180 @@ class RabbitMQueue(object):
         """ Close the RabbitMQ connection """
         if self._connection:
             self._connection.close()
+
+
+class AsyncConsumer(object):
+    """ Asynchronous consumer interface.
+
+    Uses the Pika SelectConnection with threads for submission evaluation.
+
+    """
+
+    def __init__(self, username='guest', password='guest', host='localhost',
+                 port=5672, virtual_host='/'):
+        self.username = username
+        self.password = password
+        self.host = host
+        self.port = port
+        self.virtual_host = virtual_host
+
+        credentials = pika.PlainCredentials(self.username,
+                                            self.password)
+        self.params = pika.ConnectionParameters(host=self.host,
+                                                port=self.port,
+                                                virtual_host=self.virtual_host,
+                                                credentials=credentials)
+        self.connection = None
+        self.channel = None
+        self.submission_handler = None
+        self.consumer_tag = None
+        self._closing = False
+
+    def connect(self):
+        """ Establish a RabbitMQ connection. """
+        return pika.SelectConnection(self.params, self.on_connected)
+
+    def on_connected(self, connection):
+        """ Called by Pika when the connection has been established.
+
+        Establishes a RabbitMQ channel for consuming, attaches a
+        callback to be fired when connection closes.
+
+        """
+        # Register callback invoked when the connection is lost unexpectedly
+        self.connection.add_on_close_callback(self.on_connection_closed)
+
+        # Open a new channel
+        self.connection.channel(self.on_channel_open)
+
+    def on_connection_closed(self, connection, reply_code, reply_text):
+        """ Invoked when the connection is closed.
+
+        If the close is expected, stop the ioloop.
+        Otherwise raise an exception to force grader restart.
+
+        """
+        self.channel = None
+        if self._closing:
+            self.connection.ioloop.stop()
+        else:
+            # Connection was closed unexpectedly -- throw an exception to
+            # force grader restart of evaluator worker.
+            raise Exception("Pika connection closed unexpectedly: %s %s" % (
+                            reply_code, reply_text))
+
+    def on_channel_open(self, channel):
+        """ Called by Pika when the channel has been established.
+
+        Sets prefetch limit and declares our consumer queue.
+
+        """
+        self.channel = channel
+
+        channel.basic_qos(prefetch_count=self.prefetch_count)
+
+        channel.queue_declare(queue=self.queue_name,
+                              durable=True,
+                              callback=self.on_queue_declared)
+
+    def on_queue_declared(self, frame):
+        self.consumer_tag = self.channel.basic_consume(self.on_message_received,
+                                                       queue=self.queue_name)
+
+    def on_message_received(self, channel, method, properties, body):
+        """ Called by Pika when a queue message is received.
+
+        Calls the submission handler in a thread to avoid blocking of the
+        Pika ioloop.
+
+        """
+        tag = method.delivery_tag
+        log.info(" << Message %d consumed", tag)
+        frame = json.loads(body)
+
+        # A function to be called by the submission handler when the
+        # submission has been processed.
+        on_complete = functools.partial(self.on_complete, channel, tag)
+
+        # Handle submission in a separate thread to avoid blocking of ioloop.
+        thread = threading.Thread(target=self.submission_handler,
+                                  args=(frame, on_complete))
+        thread.daemon = True
+        thread.start()
+
+    def on_complete(self, channel, tag, success):
+        """ Called by the submission handler when the submission has been handled.
+
+        The submission handler indicates success or failure by passing a bool
+        flag to this function.
+
+        Note that the channel and tag parameters are filled in using
+        ``functools.partial`` in the ``on_message_received`` method.
+
+        """
+        if success:
+            log.info(" >> Message %d ack'd", tag)
+            ack = lambda: channel.basic_ack(delivery_tag=tag)
+            self.connection.add_timeout(0, ack)
+            statsd.incr('bux_grader_framework.submissions.success')
+        else:
+            log.info(" >> Message %d nack'd", tag)
+            nack = lambda: channel.basic_ack(delivery_tag=tag)
+            self.connection.add_timeout(0, nack)
+            statsd.incr('bux_grader_framework.submissions.failure')
+
+    def consume(self, queue_name, submission_handler, prefetch_count):
+        """ Start consuming from the designated queue.
+
+            :param str queue_name: queue to consume from
+            :param callable submission_handler: submission handling callback
+            :param int prefetch_count: maximum number of submissions allowed
+                                       in queue.
+
+        """
+        # Queue to consume submissions from
+        self.queue_name = queue_name
+
+        # Callback method for handling submissions
+        self.submission_handler = submission_handler
+
+        # Blocks incoming submissions if more than this
+        # amount is present in the queue.
+        self.prefetch_count = prefetch_count
+
+        log.info("Starting consumer for queue {queue}".format(
+            queue=self.queue_name,
+        ))
+
+        try:
+            self.connection = self.connect()
+            self.connection.ioloop.start()
+        except pika.exceptions.AMQPConnectionError:
+            log.exception("Consumer for queue {queue} connection error".format(
+                          queue=self.queue_name))
+            raise
+        else:
+            # Log that the worker exited without an exception
+            log.info("Consumer for queue {queue} is exiting normally...".format(
+                     queue=self.queue_name))
+        finally:
+            # Log that the worker stopped
+            log.info("Consumer for queue {queue} stopped".format(
+                     queue=self.queue_name))
+
+    def stop(self):
+        """ Cancels queue consumer and closes the RabbitMQ connection. """
+        self._closing = True
+        if self.channel:
+            # Cancel consumer and restart ioloop so it can receive
+            # the cancel callback.
+            self.channel.basic_cancel(self.on_cancelok, self.consumer_tag)
+        self.connection.ioloop.start()
+
+    def on_cancelok(self, frame):
+        """ Called by Pika when the consumer has been cancelled.
+
+            Used to close the connection.
+
+        """
+        self.connection.close()
