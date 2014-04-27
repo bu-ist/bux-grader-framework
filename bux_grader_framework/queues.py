@@ -164,9 +164,11 @@ class RabbitMQueue(object):
 
 
 class AsyncConsumer(object):
-    """ Internal submission work queue. Backed by RabbitMQ. """
+    """ Asynchronous consumer interface.
 
-    MAX_THREADS = 12
+    Uses the Pika SelectConnection with threads for submission evaluation.
+
+    """
 
     def __init__(self, username='guest', password='guest', host='localhost',
                  port=5672, virtual_host='/'):
@@ -185,41 +187,50 @@ class AsyncConsumer(object):
         self.connection = None
         self.channel = None
         self.submission_handler = None
+        self.consumer_tag = None
+        self._closing = False
 
     def connect(self):
+        """ Establish a RabbitMQ connection. """
         return pika.SelectConnection(self.params, self.on_connected)
 
     def on_connected(self, connection):
+        """ Called by Pika when the connection has been established.
+
+        Establishes a RabbitMQ channel for consuming, attaches a
+        callback to be fired when connection closes.
+
+        """
         # Register callback invoked when the connection is lost unexpectedly
         self.connection.add_on_close_callback(self.on_connection_closed)
 
+        # Open a new channel
         self.connection.channel(self.on_channel_open)
 
     def on_connection_closed(self, connection, reply_code, reply_text):
-        """Invoked when the connection is closed unexpectedly."""
+        """ Invoked when the connection is closed.
 
-        log.warning('Connection closed, trying to reconnect: ({0}) {1}'.format(
-            reply_code,
-            reply_text,
-        ))
+        If the close is expected, stop the ioloop.
+        Otherwise raise an exception to force grader restart.
 
-        # Reconnect logic is odd with pika, and a simple self.connect() doesn't
-        # seem to work here. So instead of that, we'll just throw an exception,
-        # causing this worker process to end and the monitor will then spawn a
-        # new process.
-        raise Exception(
-            "Reply code: {}; Reply text: {}".format(reply_code, reply_text)
-        )
+        """
+        self.channel = None
+        if self._closing:
+            self.connection.ioloop.stop()
+        else:
+            # Connection was closed unexpectedly -- throw an exception to
+            # force grader restart of evaluator worker.
+            raise Exception("Pika connection closed unexpectedly: %s %s" % (
+                            reply_code, reply_text))
 
     def on_channel_open(self, channel):
+        """ Called by Pika when the channel has been established.
+
+        Sets prefetch limit and declares our consumer queue.
+
+        """
         self.channel = channel
 
-        # The prefetch count determines how many messages will be
-        # fetched by pika for processing. New messages will only be
-        # fetched after the ones that are being processed have been
-        # acknowledged. Because we are using a thread to process each
-        # message, the prefecth count also determines the maximum
-        # number of processing threads running at the same time.
         channel.basic_qos(prefetch_count=self.prefetch_count)
 
         channel.queue_declare(queue=self.queue_name,
@@ -227,17 +238,68 @@ class AsyncConsumer(object):
                               callback=self.on_queue_declared)
 
     def on_queue_declared(self, frame):
-        self.channel.basic_consume(self.on_message_received, queue=self.queue_name)
+        self.consumer_tag = self.channel.basic_consume(self.on_message_received,
+                                                       queue=self.queue_name)
+
+    def on_message_received(self, channel, method, properties, body):
+        """ Called by Pika when a queue message is received.
+
+        Calls the submission handler in a thread to avoid blocking of the
+        Pika ioloop.
+
+        """
+        tag = method.delivery_tag
+        log.info(" << Message %d consumed", tag)
+        frame = json.loads(body)
+
+        # A function to be called by the submission handler when the
+        # submission has been processed.
+        on_complete = functools.partial(self.on_complete, channel, tag)
+
+        # Handle submission in a separate thread to avoid blocking of ioloop.
+        thread = threading.Thread(target=self.submission_handler,
+                                  args=(frame, on_complete))
+        thread.daemon = True
+        thread.start()
+
+    def on_complete(self, channel, tag, success):
+        """ Called by the submission handler when the submission has been handled.
+
+        The submission handler indicates success or failure by passing a bool
+        flag to this function.
+
+        Note that the channel and tag parameters are filled in using
+        ``functools.partial`` in the ``on_message_received`` method.
+
+        """
+        if success:
+            log.info(" >> Message %d ack'd", tag)
+            ack = lambda: channel.basic_ack(delivery_tag=tag)
+            self.connection.add_timeout(0, ack)
+            statsd.incr('bux_grader_framework.submissions.success')
+        else:
+            log.info(" >> Message %d nack'd", tag)
+            nack = lambda: channel.basic_ack(delivery_tag=tag)
+            self.connection.add_timeout(0, nack)
+            statsd.incr('bux_grader_framework.submissions.failure')
 
     def consume(self, queue_name, submission_handler, prefetch_count):
-        """ Main consumer method """
+        """ Start consuming from the designated queue.
+
+            :param str queue_name: queue to consume from
+            :param callable submission_handler: submission handling callback
+            :param int prefetch_count: maximum number of submissions allowed
+                                       in queue.
+
+        """
         # Queue to consume submissions from
         self.queue_name = queue_name
 
         # Callback method for handling submissions
         self.submission_handler = submission_handler
 
-        # Limit incoming messages to this amount
+        # Blocks incoming submissions if more than this
+        # amount is present in the queue.
         self.prefetch_count = prefetch_count
 
         log.info("Starting consumer for queue {queue}".format(
@@ -261,31 +323,18 @@ class AsyncConsumer(object):
                      queue=self.queue_name))
 
     def stop(self):
-        """ Stop the worker from processing messages """
+        """ Cancels queue consumer and closes the RabbitMQ connection. """
+        self._closing = True
+        if self.channel:
+            # Cancel consumer and restart ioloop so it can receive
+            # the cancel callback.
+            self.channel.basic_cancel(self.on_cancelok, self.consumer_tag)
+        self.connection.ioloop.start()
+
+    def on_cancelok(self, frame):
+        """ Called by Pika when the consumer has been cancelled.
+
+            Used to close the connection.
+
+        """
         self.connection.close()
-
-    def on_message_received(self, channel, method, properties, body):
-        tag = method.delivery_tag
-        log.info(" << Message %d consumed", tag)
-        frame = json.loads(body)
-        on_complete = functools.partial(self.on_complete, channel, tag)
-
-        # process the submission in a different thread to avoid
-        # blocking pika's ioloop, which can cause disconnects and
-        # other errors
-        thread = threading.Thread(target=self.submission_handler,
-                                  args=(frame, on_complete))
-        thread.daemon = True
-        thread.start()
-
-    def on_complete(self, channel, tag, success):
-        if success:
-            log.info(" >> Message %d ack'd", tag)
-            ack = lambda: channel.basic_ack(delivery_tag=tag)
-            self.connection.add_timeout(0, ack)
-            statsd.incr('bux_grader_framework.submissions.success')
-        else:
-            log.info(" >> Message %d nack'd", tag)
-            nack = lambda: channel.basic_ack(delivery_tag=tag)
-            self.connection.add_timeout(0, nack)
-            statsd.incr('bux_grader_framework.submissions.failure')
