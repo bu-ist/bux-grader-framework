@@ -7,9 +7,7 @@
 
 import logging
 import multiprocessing
-import signal
 import threading
-import sys
 import time
 
 from multiprocessing.dummy import Pool
@@ -58,10 +56,8 @@ class XQueueWorker(multiprocessing.Process):
         # fetching and enqueuing submissions.
         self._queue_lock = threading.Lock()
 
-        # Shut down handling
+        # For stopping of the run loop from the main process
         self._stop = multiprocessing.Event()
-        signal.signal(signal.SIGTERM, self.on_sigterm)
-
         self.xqueue.login()
 
     def run(self):
@@ -178,13 +174,9 @@ class XQueueWorker(multiprocessing.Process):
         log.error("Could not handle submission #%d: %s", submit_id, reason)
         self.xqueue.put_result(submission, response)
 
-    def close(self):
+    def stop(self):
         """ Gracefully shuts down worker process """
         self._stop.set()
-
-    def on_sigterm(self, signum, frame):
-        """ Break out of run loop on SIGTERM """
-        self.close()
 
 
 class EvaluatorWorker(multiprocessing.Process):
@@ -210,18 +202,34 @@ class EvaluatorWorker(multiprocessing.Process):
 
         self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
 
-        # Attaches a callback handler for SIGTERM signals to
-        # handle consumer canceling / connection closing
-        signal.signal(signal.SIGTERM, self.on_sigterm)
+        # For stopping of the run loop from the main process
+        self._stop = multiprocessing.Event()
 
     def run(self):
         """ Polls submission queue. """
         log.info("Evaluator worker '%s' (PID=%s) awaiting submissions...",
                  self.evaluator.name, self.pid)
 
-        self.queue.consume(self.evaluator.name,
-                           self.handle_submission,
-                           self._eval_thread_count)
+        # Start consuming in a separate thread
+        consumer_thread = threading.Thread(target=self.queue.consume,
+                                           args=(self.evaluator.name,
+                                                 self.handle_submission,
+                                                 self._eval_thread_count))
+        consumer_thread.daemon = True
+        consumer_thread.start()
+
+        # Blocks until stop event is set by main grader process
+        try:
+            self._stop.wait()
+        except (KeyboardInterrupt, SystemExit):
+            pass
+
+        # Stop consumer thread by cancelling queue consumer and
+        # closing RabbitMQ connection
+        self.queue.stop()
+
+        # Wait for consumer thread to exit cleanly
+        consumer_thread.join()
 
     def handle_submission(self, frame, on_complete):
         """ Handles a submission popped off the internal work queue.
@@ -258,9 +266,6 @@ class EvaluatorWorker(multiprocessing.Process):
         # Notifies queue to ack / nack message
         on_complete(success)
 
-    def on_sigterm(self, signum, frame):
-        """ Breaks out of run loop on SIGTERM """
-        # Implicitly stops consumer by raising a SystemExit exception
-        # in this process.
-        # TODO: Better approach to consumer cancelation
-        sys.exit()
+    def stop(self):
+        """ Gracefully shuts down worker process """
+        self._stop.set()

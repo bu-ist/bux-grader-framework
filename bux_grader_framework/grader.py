@@ -190,7 +190,7 @@ class Grader(object):
         """ Shuts down all worker processes """
         log.info("Shutting down worker processes: %s", self.workers)
         for worker in self.workers:
-            worker.terminate()
+            worker.stop()
             worker.join()
         log.info("All workers stopped")
 
