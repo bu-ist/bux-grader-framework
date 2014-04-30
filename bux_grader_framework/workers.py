@@ -8,6 +8,7 @@
 import logging
 import multiprocessing
 import signal
+import threading
 import sys
 import time
 
@@ -52,6 +53,11 @@ class XQueueWorker(multiprocessing.Process):
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
         self._default_evaluator = grader.config['DEFAULT_EVALUATOR']
 
+        # The underyling pika BlockingConnection used for the work queue is not
+        # thread safe. We utilize a lock to prevent concurrent access while
+        # fetching and enqueuing submissions.
+        self._queue_lock = threading.Lock()
+
         # Shut down handling
         self._stop = multiprocessing.Event()
         signal.signal(signal.SIGTERM, self.on_sigterm)
@@ -77,7 +83,8 @@ class XQueueWorker(multiprocessing.Process):
                     # Sleep if no submissions are present
                     # Uses queue.sleep which pings RabbitMQ to prevent
                     # heartbeat_interval-related timeouts.
-                    self.queue.sleep(self._poll_interval)
+                    with self._queue_lock:
+                        self.queue.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
             pass
 
@@ -143,7 +150,8 @@ class XQueueWorker(multiprocessing.Process):
         if evaluator and self.grader.is_registered_evaluator(evaluator):
             frame["submission"] = submission
             # Push to evaluator work queue
-            self.queue.put(evaluator, frame)
+            with self._queue_lock:
+                self.queue.put(evaluator, frame)
         else:
             # Notify LMS that the submission could not be handled
             self.push_failure("Evaluator could not be found: {}".format(
