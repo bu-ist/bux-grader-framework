@@ -47,7 +47,7 @@ class XQueueWorker(multiprocessing.Process):
         self.grader = grader
 
         self.xqueue = grader.xqueue()
-        self.queue = grader.work_queue()
+        self.queue = grader.producer()
 
         self._xqueue_pool_size = grader.config['XQUEUE_POOL_SIZE']
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
@@ -155,6 +155,7 @@ class XQueueWorker(multiprocessing.Process):
                 lock_elapsed = int((time.time() - lock_before)*1000.0)
                 statsd.timing('bux_grader_framework.xqueue_lock_wait', lock_elapsed)
 
+                # Enqueue submission for EvaluationWorker
                 self.queue.put(evaluator, frame)
         else:
             # Notify LMS that the submission could not be handled
@@ -205,7 +206,7 @@ class EvaluatorWorker(multiprocessing.Process):
 
         self.evaluator = self.grader.evaluator(evaluator)
         self.xqueue = self.grader.xqueue()
-        self.queue = self.grader.queue_consumer()
+        self.queue = self.grader.consumer()
 
         self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
 
@@ -215,7 +216,7 @@ class EvaluatorWorker(multiprocessing.Process):
 
     def run(self):
         """ Polls submission queue. """
-        log.info("'%s' evaluator (PID=%s) awaiting submissions...",
+        log.info("Evaluator worker '%s' (PID=%s) awaiting submissions...",
                  self.evaluator.name, self.pid)
 
         self.queue.consume(self.evaluator.name,
