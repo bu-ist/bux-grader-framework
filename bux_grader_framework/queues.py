@@ -246,7 +246,7 @@ class SubmissionConsumer(object):
             statsd.incr('bux_grader_framework.submissions.success')
         else:
             log.info(" >> Message %d nack'd", tag)
-            nack = lambda: channel.basic_ack(delivery_tag=tag)
+            nack = lambda: channel.basic_nack(delivery_tag=tag, requeue=False)
             self._connection.add_timeout(0, nack)
             statsd.incr('bux_grader_framework.submissions.failure')
 
