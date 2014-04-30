@@ -3,10 +3,38 @@
 External grader daemon management
 
 """
-import time
+import argparse
+import os
+import sys
 
-try:
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt, SystemExit:
-    print " Exiting"
+from bux_grader_framework import Grader
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Start your edX graders')
+    parser.add_argument('--settings', dest='settings',
+                        help='Grader settings module path')
+    parser.add_argument('--pythonpath', dest='pythonpath',
+                        help='Path to add to sys.path')
+    args = parser.parse_args()
+
+    # Add current directory to the path
+    print "Adding curent directory to sys.path: {}".format(os.getcwd())
+    sys.path.insert(0, os.getcwd())
+
+    # Insert extra path components to pythonpath if passed
+    if args.pythonpath:
+        print "Adding to sys.path: {}".format(args.pythonpath)
+        sys.path.insert(0, args.pythonpath)
+
+    # Set grader settings module from command line
+    if args.settings:
+        settings = args.settings
+    else:
+        settings = os.environ.get('GRADER_SETTINGS_MODULE', '')
+    print "Settings module: {}".format(settings)
+
+    # Create and start the grader
+    grader = Grader()
+    grader.config_from_module(settings)
+    grader.setup_logging()
+    grader.run()
