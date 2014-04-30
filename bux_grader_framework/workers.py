@@ -8,10 +8,14 @@
 import logging
 import multiprocessing
 import signal
+import threading
 import sys
 import time
 
+from multiprocessing.dummy import Pool
+
 from string import Template
+from statsd import statsd
 
 log = logging.getLogger(__name__)
 
@@ -43,10 +47,16 @@ class XQueueWorker(multiprocessing.Process):
         self.grader = grader
 
         self.xqueue = grader.xqueue()
-        self.queue = grader.work_queue()
+        self.queue = grader.producer()
 
+        self._xqueue_pool_size = grader.config['XQUEUE_POOL_SIZE']
         self._poll_interval = grader.config['XQUEUE_POLL_INTERVAL']
         self._default_evaluator = grader.config['DEFAULT_EVALUATOR']
+
+        # The underyling pika BlockingConnection used for the work queue is not
+        # thread safe. We utilize a lock to prevent concurrent access while
+        # fetching and enqueuing submissions.
+        self._queue_lock = threading.Lock()
 
         # Shut down handling
         self._stop = multiprocessing.Event()
@@ -60,35 +70,65 @@ class XQueueWorker(multiprocessing.Process):
                  self.pid)
 
         self.queue.connect()
+        self.pool = Pool(processes=self._xqueue_pool_size)
 
         try:
             while not self._stop.is_set():
                 # Pop any pending submissions and transfer to work queue
-                for submission in self.get_submissions():
-                    self.enqueue_submission(submission)
+                submit_count = self.xqueue.get_queuelen(self.queue_name)
 
-                # Sleep once all submissions are transferred
-                # Uses queue.sleep which pings RabbitMQ to prevent
-                # heartbeat_interval-related timeouts.
-                self.queue.sleep(self._poll_interval)
+                if submit_count:
+                    self.get_submissions(submit_count)
+                else:
+                    # Sleep if no submissions are present
+                    # Uses queue.sleep which pings RabbitMQ to prevent
+                    # heartbeat_interval-related timeouts.
+                    with self._queue_lock:
+                        self.queue.sleep(self._poll_interval)
         except (KeyboardInterrupt, SystemExit):
             pass
 
+        self.pool.close()
+        self.pool.join()
         self.queue.close()
 
-    def get_submissions(self):
-        """ Submission generator """
-        if self.xqueue.get_queuelen(self.queue_name):
-            has_submissions = True
-            while has_submissions:
-                submission = self.xqueue.get_submission(self.queue_name)
-                if submission:
-                    yield submission
-                else:
-                    has_submissions = False
+    def get_submissions(self, submit_count):
+        """ Fetches submission from XQueue asynchronously """
+        fetched = 0
+        while fetched < submit_count:
+            self.pool.apply_async(self.xqueue.get_submission,
+                                  (self.queue_name,),
+                                  callback=self.enqueue_submission)
+            fetched += 1
 
     def enqueue_submission(self, submission):
-        """ Adds a submision popped from XQueue to an internal work queue. """
+        """ Adds a submision popped from XQueue to an internal work queue.
+
+        This method is called by ``apply_async`` when an XQueue submission
+        request has completed.
+
+        """
+
+        # Bail early if no submission was received
+        if not submission:
+            return
+
+        received_time = time.time()
+        submit_time = submission['xqueue_body']['student_info']['submission_time']
+
+        # For load testing:
+        #
+        #   The load test suite uses timestamps for submission_time. The LMS uses
+        #   a formatted date string. This block only logs submission delays when the
+        #   former is being used as the date string resolution isn't high enough to
+        #   be useful.
+        #
+        if isinstance(submit_time, float):
+            delay = int((received_time - submit_time)*1000.0)
+            log.info("Submitted: %d Received: %d Delay: %d", submit_time, received_time, delay)
+            statsd.timing('bux_grader_framework.get_submission_delay', delay)
+
+        frame = {"received_by": self.pid, "received_time": received_time}
         header = submission['xqueue_header']
         payload = submission['xqueue_body']['grader_payload']
 
@@ -108,8 +148,15 @@ class XQueueWorker(multiprocessing.Process):
 
         # Ensure evaluator is registered with this grader
         if evaluator and self.grader.is_registered_evaluator(evaluator):
+            frame["submission"] = submission
             # Push to evaluator work queue
-            self.queue.put(evaluator, submission)
+            lock_before = time.time()
+            with self._queue_lock:
+                lock_elapsed = int((time.time() - lock_before)*1000.0)
+                statsd.timing('bux_grader_framework.xqueue_lock_wait', lock_elapsed)
+
+                # Enqueue submission for EvaluationWorker
+                self.queue.put(evaluator, frame)
         else:
             # Notify LMS that the submission could not be handled
             self.push_failure("Evaluator could not be found: {}".format(
@@ -159,7 +206,9 @@ class EvaluatorWorker(multiprocessing.Process):
 
         self.evaluator = self.grader.evaluator(evaluator)
         self.xqueue = self.grader.xqueue()
-        self.queue = self.grader.work_queue()
+        self.queue = self.grader.consumer()
+
+        self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
 
         # Attaches a callback handler for SIGTERM signals to
         # handle consumer canceling / connection closing
@@ -167,48 +216,47 @@ class EvaluatorWorker(multiprocessing.Process):
 
     def run(self):
         """ Polls submission queue. """
-        log.info("'%s' evaluator (PID=%s) awaiting submissions...",
+        log.info("Evaluator worker '%s' (PID=%s) awaiting submissions...",
                  self.evaluator.name, self.pid)
 
-        self.queue.connect()
+        self.queue.consume(self.evaluator.name,
+                           self.handle_submission,
+                           self._eval_thread_count)
 
-        try:
-            self.queue.consume(self.evaluator.name,
-                               self.handle_submission)
-        except (KeyboardInterrupt, SystemExit):
-            pass
-
-        self.queue.close()
-
-    def handle_submission(self, submission):
+    def handle_submission(self, frame, on_complete):
         """ Handles a submission popped off the internal work queue.
 
         Invokes ``self.evaluator.evaluate()`` to generate a response.
 
         """
-        time_start = time.time()
-
+        submission = frame["submission"]
         submission_id = submission['xqueue_header']['submission_id']
+        success = True
         log.info("Evaluating submission #%d", submission_id)
 
         try:
-            result = self.evaluator.evaluate(submission)
+            with statsd.timer('bux_grader_framework.evaluate'):
+                result = self.evaluator.evaluate(submission)
         except Exception:
             log.exception("Could not evaluate submission: %s", submission)
-            return False
+            success = False
 
-        try:
-            success = self.xqueue.put_result(submission, result)
-        except Exception:
-            log.exception("Could not post reply to XQueue.")
-            return False
-
-        time_stop = time.time()
-        elapsed_time = (time_stop - time_start)*1000.0
+        # Note time spent in grader (between /xqueue/get_submission/ and
+        # /xqueue/put_result/)
+        elapsed_time = int((time.time() - frame["received_time"])*1000.0)
+        statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
         log.info("Submission #%d evaluated in %0.3fms",
                  submission_id, elapsed_time)
 
-        return success
+        if success and result:
+            try:
+                success = self.xqueue.put_result(submission, result)
+            except Exception:
+                log.exception("Could not post reply to XQueue.")
+                success = False
+
+        # Notifies queue to ack / nack message
+        on_complete(success)
 
     def on_sigterm(self, signum, frame):
         """ Breaks out of run loop on SIGTERM """

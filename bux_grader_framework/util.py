@@ -1,3 +1,4 @@
+import hashlib
 
 
 def class_imported_from(cls, modules):
@@ -12,3 +13,10 @@ def class_imported_from(cls, modules):
     if contained:
         return True
     return False
+
+
+def make_hashkey(seed):
+    """ Generate a hashkey (string) """
+    h = hashlib.md5()
+    h.update(str(seed))
+    return h.hexdigest()
