@@ -150,7 +150,11 @@ class XQueueWorker(multiprocessing.Process):
         if evaluator and self.grader.is_registered_evaluator(evaluator):
             frame["submission"] = submission
             # Push to evaluator work queue
+            lock_before = time.time()
             with self._queue_lock:
+                lock_elapsed = int((time.time() - lock_before)*1000.0)
+                statsd.timing('bux_grader_framework.xqueue_lock_wait', lock_elapsed)
+
                 self.queue.put(evaluator, frame)
         else:
             # Notify LMS that the submission could not be handled
