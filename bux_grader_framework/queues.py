@@ -313,6 +313,9 @@ class AsyncConsumer(object):
             log.exception("Consumer for queue {queue} connection error".format(
                           queue=self.queue_name))
             raise
+        except (KeyboardInterrupt, SystemExit):
+            # Gracefully stop consumer and close connection
+            self.stop()
         else:
             # Log that the worker exited without an exception
             log.info("Consumer for queue {queue} is exiting normally...".format(
