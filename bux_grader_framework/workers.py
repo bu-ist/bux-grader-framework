@@ -236,6 +236,13 @@ class EvaluatorWorker(multiprocessing.Process):
             log.exception("Could not evaluate submission: %s", submission)
             success = False
 
+        # Note time spent in grader (between /xqueue/get_submission/ and
+        # /xqueue/put_result/)
+        elapsed_time = int((time.time() - frame["received_time"])*1000.0)
+        statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
+        log.info("Submission #%d evaluated in %0.3fms",
+                 submission_id, elapsed_time)
+
         if success and result:
             try:
                 success = self.xqueue.put_result(submission, result)
@@ -245,11 +252,6 @@ class EvaluatorWorker(multiprocessing.Process):
 
         # Notifies queue to ack / nack message
         on_complete(success)
-
-        elapsed_time = int((time.time() - frame["received_time"])*1000.0)
-        statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
-        log.info("Submission #%d evaluated in %0.3fms",
-                 submission_id, elapsed_time)
 
     def on_sigterm(self, signum, frame):
         """ Breaks out of run loop on SIGTERM """
