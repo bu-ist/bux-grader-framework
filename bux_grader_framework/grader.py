@@ -9,6 +9,7 @@ import importlib
 import logging
 import logging.config
 import multiprocessing
+import signal
 import sys
 import time
 
@@ -64,6 +65,7 @@ class Grader(object):
         self._evaluators = None
 
         self._stop = multiprocessing.Event()
+        signal.signal(signal.SIGTERM, self._on_sigterm)
 
     def run(self):
         """ Starts the grader daemon
@@ -190,7 +192,7 @@ class Grader(object):
         """ Shuts down all worker processes """
         log.info("Shutting down worker processes: %s", self.workers)
         for worker in self.workers:
-            worker.terminate()
+            worker.stop()
             worker.join()
         log.info("All workers stopped")
 
@@ -382,3 +384,7 @@ class Grader(object):
                                              .format(evaluator_list))
 
         return evaluators
+
+    def _on_sigterm(self, signum, frame):
+        """ Inititiate grader shutdown on SIGTERM """
+        self.stop()
