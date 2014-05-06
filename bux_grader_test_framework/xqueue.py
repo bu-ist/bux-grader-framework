@@ -16,10 +16,13 @@ class XQueueStub(object):
         to keep track of submissions / posted results.
 
     """
-    def __init__(self, simulation=False):
+    def __init__(self, count, rate, simulation=False):
+        self.count = count
+        self.rate = rate
+        self.simulation = simulation
+
         self.submissions = multiprocessing.JoinableQueue()
         self.results = multiprocessing.Queue()
-        self.simulation = simulation
 
     def login(self):
         return True
@@ -74,6 +77,8 @@ class XQueueStub(object):
         utc_put = datetime.datetime.utcfromtimestamp(put_time)
 
         result = (
+            self.count,
+            self.rate,
             submission_id,
             response_time,
             utc_pull,
