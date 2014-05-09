@@ -1,4 +1,5 @@
 import csv
+import datetime
 import multiprocessing
 import random
 import time
@@ -12,42 +13,62 @@ from .xqueue import XQueueStub
 class GraderTestRunner(object):
     def __init__(self, settings_module, count=50, submissions_per_second=10,
                  simulation=False, resultfile='results.csv'):
+        self.settings_module = settings_module
         self.count = count
-        self.submissions_per_second = submissions_per_second
+        self.submission_rates = [int(rate) for rate in str(submissions_per_second).split(",")]
         self.simulation = simulation
         self.resultfile = resultfile
-
-        # Time to wait between submississions
-        self.submission_delay = 1.0 / submissions_per_second
-
-        self.xqueue = XQueueStub(simulation=self.simulation)
-        self.grader = TestGrader(self.xqueue, settings_module)
 
     def run(self):
         """ Run load tests """
 
-        # TODO: Generate a run number based on current time
+        # Prefix result CSV with datestamp
+        self.run_time = datetime.datetime.now()
+
+        print "Starting load tests"
+        print "Run count: %d" % len(self.submission_rates)
+        print "Run time: %s" % self.run_time.isoformat()
+        print
+
+        for idx, rate in enumerate(self.submission_rates):
+            run = idx + 1
+            print "======================= Run #%d =============== " % run
+            self.run_test(rate, self.count)
+            print "======================= Run #%d completed ===== " % run
+            self.reset()
+            print
+
+            if run < len(self.submission_rates):
+                print "... Sleeping 60 seconds between runs  z z zzz ..."
+                print
+                time.sleep(60)
+
+        print "Load tests completed!"
+
+    def run_test(self, submit_rate, count):
+        """ A single load test run """
+        self.xqueue = XQueueStub(count, submit_rate, self.simulation)
+        self.grader = TestGrader(self.xqueue, self.settings_module)
 
         # Stats
-        print "Starting grader load tests"
-        if self.simulation:
-            print "Simulation mode: ON"
-        else:
-            print "Simulation mode: OFF"
-            print "Submission rate: %d/s" % self.submissions_per_second
+        submit_delay = 1.0 / submit_rate
+        print "Submission count: %d" % count
+        print "Submission rate: %d/s" % submit_rate
+        print
 
         # Start the grader process
         print "Starting grader..."
         self.grader.start()
 
         # Sleep for a few seconds to give the grader time to initialize
-        print "Waiting 5 seconds for grader to initialize..."
-        time.sleep(5)
-
-        time_start = time.time()
+        print "Waiting 10 seconds for grader to initialize..."
+        print
+        time.sleep(10)
 
         # Generate test submissions
-        print "Generating %d submissions..." % self.count
+        time_start = time.time()
+        print "Generating %d submissions..." % count
+        print
         for submission in self.generate_submissions():
             self.xqueue.submit(submission)
 
@@ -55,7 +76,7 @@ class GraderTestRunner(object):
             if self.simulation:
                 time.sleep(random.uniform(0.1, 0.5))
             else:
-                time.sleep(self.submission_delay)
+                time.sleep(submit_delay)
 
         print "Waiting for all submissions to be handled..."
         self.xqueue.submissions.join()
@@ -63,23 +84,24 @@ class GraderTestRunner(object):
 
         time_stop = time.time()
         elapsed_time = time_stop - time_start
-        print "%d submissions handled in %0.3f seconds" % (self.count,
+        print
+        print "%d submissions handled in %0.3f seconds" % (count,
                                                            elapsed_time)
 
-        # Gather results
         print "Generating results..."
-        self.generate_results()
+        self.generate_results(submit_rate)
         self.xqueue.results.close()
 
-        print "Sleeping 5 seconds..."
-        time.sleep(5)
+        print "Waiting 10 seconds for grader to finish..."
+        time.sleep(10)
 
-        # Terminate grader process
         print "Stopping grader..."
         self.grader.stop()
         self.grader.join()
 
-        print "Load tests completed."
+    def reset(self):
+        self.grader = None
+        self.xqueue = None
 
     def generate_submissions(self):
         """ Generates ``self.count`` submissions """
@@ -125,10 +147,13 @@ class GraderTestRunner(object):
         """ Subclasses must implement """
         pass
 
-    def generate_results(self):
+    def generate_results(self, rate):
         """ Logs results to CSV """
-        print "Creating log file: %s" % self.resultfile
-        with open(self.resultfile, 'w') as f:
+        outfile = "%s.%s.%s" % (self.run_time.strftime("%Y-%m-%d-%H%M%s"),
+                                rate, self.resultfile)
+
+        print "Creating log file: %s" % outfile
+        with open(outfile, 'w') as f:
             writer = csv.writer(f)
             for result in self.xqueue.get_results():
                 writer.writerow(result)
