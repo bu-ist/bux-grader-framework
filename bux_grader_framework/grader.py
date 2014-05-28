@@ -86,15 +86,15 @@ class Grader(object):
         for evaluator in self.evaluators:
             for num in range(self.config['WORKER_COUNT']):
                 worker = EvaluatorWorker(evaluator, self)
-                self.workers.append(worker)
+                if worker.status():
+                    self.workers.append(worker)
+                else:
+                    sys.exit("Could not start worker: %s" % worker.name)
 
         # Start all workers
         for worker in self.workers:
             log.info("Starting worker: %s", worker.name)
-            if worker.status():
-                worker.start()
-            else:
-                sys.exit("Could not start worker: %s" % worker.name)
+            worker.start()
 
         try:
             while self.workers:
