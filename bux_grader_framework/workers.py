@@ -233,14 +233,13 @@ class EvaluatorWorker(multiprocessing.Process):
             self._stop.wait()
         except (KeyboardInterrupt, SystemExit):
             pass
-        finally:
 
-            # Stop consumer thread by cancelling queue consumer and
-            # closing RabbitMQ connection
-            self.queue.stop()
+        # Stop consumer thread by cancelling queue consumer and
+        # closing RabbitMQ connection
+        self.queue.stop()
 
-            # Wait for consumer thread to exit cleanly
-            consumer_thread.join()
+        # Wait for consumer thread to exit cleanly
+        consumer_thread.join()
 
     def handle_submission(self, frame, on_complete):
         """ Handles a submission popped off the internal work queue.
