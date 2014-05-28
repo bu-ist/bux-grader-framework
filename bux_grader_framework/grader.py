@@ -45,10 +45,10 @@ class Grader(object):
         "XQUEUE_PASSWORD": "password",
         "XQUEUE_TIMEOUT": 10,
         "XQUEUE_POLL_INTERVAL": 1,
-        "XQUEUE_MAX_RETRIES": 5,
-        "XQUEUE_RETRY_INTERVAL": 5,
         "XQUEUE_POOL_SIZE": 6,
         "WORKER_COUNT": 2,
+        "WORKER_MAX_RETRIES": 5,
+        "WORKER_RETRY_INTERVAL": 5,
         "EVAL_THREAD_COUNT": 10,
         "MONITOR_INTERVAL": 1,
         "RABBITMQ_USER": "guest",
@@ -91,7 +91,10 @@ class Grader(object):
         # Start all workers
         for worker in self.workers:
             log.info("Starting worker: %s", worker.name)
-            worker.start()
+            if worker.status():
+                worker.start()
+            else:
+                sys.exit("Could not start worker: %s" % worker.name)
 
         try:
             while self.workers:
@@ -137,47 +140,54 @@ class Grader(object):
             log.info('Worker failed: %s', worker.name)
             self.workers.remove(worker)
 
-            # Create a new process using the same class / configuration
-            if type(worker) == XQueueWorker:
-                new_worker = self.restart_xqueue()
-                if not new_worker:
-                    sys.exit("Could not restart XQueue.")
-            elif type(worker) == EvaluatorWorker:
-                new_worker = EvaluatorWorker(worker.evaluator.name, self)
-
+            new_worker = self.restart_worker(worker)
             if new_worker:
                 self.workers.append(new_worker)
-                log.info('Restarting worker: %s', new_worker.name)
-                new_worker.start()
+                log.info('Restarted worker: %s', new_worker.name)
             else:
-                log.error('Could not re-start worker: %s', worker.name)
+                # Exit indicating failure if any worker cannot be restarted
+                sys.exit("Could not restart worker: %s" % worker.name)
 
-    def restart_xqueue(self):
-        """ Restarts XQueueWorker process on failure.
+    def restart_worker(self, worker):
+        """ Attempts to restart worker process.
 
-        Will try ``XQUEUE_MAX_RETRIES`` with ``XQUEUE_RETRY_INTERVAL``
-        seconds between each attempt before giving up.
+        Will attempt WORKER_MAX_RETRIES times, waiting WORKER_RETRY_INTERVAL
+        between each attempt.
+
+        Returns the restarted worker process on succesful restart,
+        or false if the worker cannot be restarted.
 
         """
-        attempts = 0
-        while attempts < self.config["XQUEUE_MAX_RETRIES"]:
-            attempts += 1
-            log.info("Restarting XQueueWorker (attempt %d of %d)",
-                     attempts, self.config["XQUEUE_MAX_RETRIES"])
+        # Create a new process using the same class / configuration
+        if type(worker) == XQueueWorker:
+            new_worker = XQueueWorker(worker.queue_name, self)
+        elif type(worker) == EvaluatorWorker:
+            new_worker = EvaluatorWorker(worker.evaluator.name, self)
 
-            try:
-                worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
-            except XQueueException:
-                log.exception("Restart failed, sleeping %d seconds...",
-                              self.config["XQUEUE_RETRY_INTERVAL"])
-                time.sleep(self.config["XQUEUE_RETRY_INTERVAL"])
-            else:
-                return worker
+        attempts = 0
+        max_attempts = self.config["WORKER_MAX_RETRIES"]
+
+        while attempts < max_attempts:
+            attempts += 1
+            log.info("Restarting %s (attempt %d of %d)...",
+                     worker.name, attempts, max_attempts)
+
+            # Check worker status method to confirm restart was success
+            if new_worker.status():
+                break
+
+            log.info("Unable to restart, waiting %d secs...",
+                     self.config["WORKER_RETRY_INTERVAL"])
+            time.sleep(self.config["WORKER_RETRY_INTERVAL"])
         else:
-            log.critical("Failed to restart XQueueWorker after %d attempts",
-                         attempts)
+            log.critical("Failed to restart worker after %d attempts",
+                         max_attempts)
             return False
-        return worker
+
+        # Start the new worker process
+        new_worker.start()
+
+        return new_worker
 
     def stop(self):
         """ Sets a signal to break out of the `run` loop
