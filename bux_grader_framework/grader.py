@@ -8,6 +8,8 @@
 import importlib
 import logging
 import logging.config
+import multiprocessing
+import signal
 import sys
 import time
 
@@ -18,7 +20,7 @@ from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker
 from .exceptions import ImproperlyConfiguredGrader, XQueueException
 from .xqueue import XQueueClient
-from .queues import RabbitMQueue
+from .queues import SubmissionProducer, SubmissionConsumer
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -45,7 +47,9 @@ class Grader(object):
         "XQUEUE_POLL_INTERVAL": 1,
         "XQUEUE_MAX_RETRIES": 5,
         "XQUEUE_RETRY_INTERVAL": 5,
+        "XQUEUE_POOL_SIZE": 6,
         "WORKER_COUNT": 2,
+        "EVAL_THREAD_COUNT": 10,
         "MONITOR_INTERVAL": 1,
         "RABBITMQ_USER": "guest",
         "RABBITMQ_PASSWORD": "guest",
@@ -59,6 +63,9 @@ class Grader(object):
 
         self._config = None
         self._evaluators = None
+
+        self._stop = multiprocessing.Event()
+        signal.signal(signal.SIGTERM, self._on_sigterm)
 
     def run(self):
         """ Starts the grader daemon
@@ -90,10 +97,16 @@ class Grader(object):
             while self.workers:
                 self.monitor()
                 time.sleep(self.config['MONITOR_INTERVAL'])
-        except (KeyboardInterrupt, SystemExit):
-            self.stop()
 
-        log.info("All workers removed, stopping...")
+                # Calling the `stop` method will trigger this event
+                if self._stop.is_set():
+                    break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            # Ensure any running workers are terminated gracefully
+            # before exiting
+            self.close()
 
     def monitor(self):
         """ Monitors grader processes """
@@ -184,9 +197,19 @@ class Grader(object):
         return worker
 
     def stop(self):
+        """ Sets a signal to break out of the `run` loop
+
+        Utilizes a ``multiprocessing.Event`` to allow stopping
+        grader from external process.
+
+        """
+        self._stop.set()
+
+    def close(self):
         """ Shuts down all worker processes """
         log.info("Shutting down worker processes: %s", self.workers)
         for worker in self.workers:
+            worker.stop()
             worker.join()
         log.info("All workers stopped")
 
@@ -239,13 +262,11 @@ class Grader(object):
 
         return XQueueClient(url, username, password, timeout)
 
-    def work_queue(self):
-        """ Returns a fresh :class:`WorkQueue` instance configured for this grader.
+    def producer(self):
+        """ Returns a queue producer configured for this grader.
 
-            >>> work_queue = grader.work_queue()
-            >>> work_queue.get('test_queue')
-            >>> work_queue.put('test_queue', 'message')
-            >>> work_queue.consume('test_queue')
+            >>> producer = grader.producer()
+            >>> producer.put('test_queue', submission)
 
         """
         try:
@@ -257,7 +278,27 @@ class Grader(object):
         except KeyError as e:
             raise ImproperlyConfiguredGrader(e)
 
-        return RabbitMQueue(username, password, host, port, virtual_host)
+        return SubmissionProducer(username, password, host, port, virtual_host)
+
+    def consumer(self):
+        """ Returns a queue consumer configured for this grader.
+
+            >>> queue = grader.consumer()
+            >>> queue.consume(queue_name='test_queue',
+                              submission_handler=eval_func,
+                              prefetch_count=10)
+
+        """
+        try:
+            username = self.config['RABBITMQ_USER']
+            password = self.config['RABBITMQ_PASSWORD']
+            host = self.config['RABBITMQ_HOST']
+            port = self.config['RABBITMQ_PORT']
+            virtual_host = self.config['RABBITMQ_VHOST']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return SubmissionConsumer(username, password, host, port, virtual_host)
 
     def evaluator(self, name):
         """ Returns a configured evaluator.
@@ -360,3 +401,7 @@ class Grader(object):
                                              .format(evaluator_list))
 
         return evaluators
+
+    def _on_sigterm(self, signum, frame):
+        """ Inititiate grader shutdown on SIGTERM """
+        self.stop()

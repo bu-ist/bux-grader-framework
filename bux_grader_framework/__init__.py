@@ -8,7 +8,7 @@
     :license: GNU Affero General Public License
 """
 
-__version__ = '0.1.0'
+__version__ = '0.2.0'
 
 DEFAULT_LOGGING = {
     'version': 1,
@@ -33,6 +33,10 @@ DEFAULT_LOGGING = {
         },
     },
 }
+
+import os
+os.environ['STATSD_HOST'] = os.environ.get('STATSD_HOST', '127.0.0.1')
+os.environ['STATSD_PORT'] = os.environ.get('STATSD_PORT', '8125')
 
 from .conf import Config
 from .evaluators import registered_evaluators, BaseEvaluator

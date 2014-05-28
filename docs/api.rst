@@ -30,6 +30,13 @@ Workers
 .. autoclass:: bux_grader_framework.EvaluatorWorker
    :members:
 
+Submission Queues
+-----------------
+.. autoclass:: bux_grader_framework.queues.SubmissionProducer
+   :members:
+.. autoclass:: bux_grader_framework.queues.SubmissionConsumer
+   :members:
+
 XQueue
 ------
 
@@ -40,6 +47,7 @@ Utility
 -------
 
 .. autofunction:: bux_grader_framework.util.class_imported_from
+.. autofunction:: bux_grader_framework.util.make_hashkey
 
 Exceptions
 ----------

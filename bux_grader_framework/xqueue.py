@@ -11,6 +11,7 @@ import urlparse
 
 import requests
 from requests.exceptions import Timeout, HTTPError, ConnectionError
+from statsd import statsd
 
 from .exceptions import (XQueueException,
                          BadCredentials, BadQueueName,
@@ -103,7 +104,9 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_queuelen/")
         params = {"queue_name": queue_name}
 
-        success, content = self._request(url, "get", params=params)
+        with statsd.timer('bux_grader_framework.xqueue.get_queuelen'):
+            success, content = self._request(url, "get", params=params)
+
         if not success:
             error_msg = "Could not get queue length: {}".format(content)
             if content.startswith("Valid queue names are"):
@@ -130,7 +133,9 @@ class XQueueClient(object):
         url = urlparse.urljoin(self.url, "/xqueue/get_submission/")
         params = {"queue_name": queue_name}
 
-        success, content = self._request(url, 'get', params=params)
+        with statsd.timer('bux_grader_framework.xqueue.get_submission'):
+            success, content = self._request(url, 'get', params=params)
+
         if not success:
             error_msg = "Could not get submission: {}".format(content)
             if self.QUEUE_NOT_FOUND_MSG % queue_name == content:
@@ -146,6 +151,7 @@ class XQueueClient(object):
 
         log.debug("Retrieved submission from \"{}\": {}".format(queue_name,
                                                                 submission))
+
         return {"xqueue_header": header,
                 "xqueue_body": body,
                 "xqueue_files": files}
@@ -183,7 +189,9 @@ class XQueueClient(object):
             "xqueue_body": json.dumps(result)
         }
 
-        success, content = self._request(url, 'post', data=post_data)
+        with statsd.timer('bux_grader_framework.xqueue.put_result'):
+            success, content = self._request(url, 'post', data=post_data)
+
         if not success:
             log.error("Could not post result: {}".format(content))
             raise InvalidGraderReply(content)
