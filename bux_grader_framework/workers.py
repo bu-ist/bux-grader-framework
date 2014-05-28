@@ -241,13 +241,21 @@ class EvaluatorWorker(multiprocessing.Process):
 
         # Blocks until stop event is set by main grader process
         try:
-            self._stop.wait()
+            while not self._stop.is_set():
+
+                # If the consumer thread dies unexpectedly we raise an
+                # exception to trigger a restart by the main process.
+                if not consumer_thread.is_alive():
+                    raise Exception("Consumer thread died unexpectedly.")
+
+                time.sleep(1)
+
         except (KeyboardInterrupt, SystemExit):
             pass
-
-        # Stop consumer thread by cancelling queue consumer and
-        # closing RabbitMQ connection
-        self.queue.stop()
+        finally:
+            # Stop consumer thread by cancelling queue consumer and
+            # closing RabbitMQ connection
+            self.queue.stop()
 
         # Wait for consumer thread to exit cleanly
         consumer_thread.join()
@@ -288,7 +296,7 @@ class EvaluatorWorker(multiprocessing.Process):
         on_complete(success)
 
     def status(self):
-        log.info("Checking Evaluator status...")
+        """ Returns whether or not this evaluator is operational. """
         return self.evaluator.status()
 
     def stop(self):
