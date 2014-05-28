@@ -291,6 +291,11 @@ class SubmissionConsumer(object):
 
     def stop(self):
         """ Cancels queue consumer and closes the RabbitMQ connection. """
+
+        # No connection, nothing to close
+        if not self._connection:
+            return
+
         self._closing = True
         if self._channel:
             # Cancel consumer and restart ioloop so it can receive
