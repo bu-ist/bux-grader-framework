@@ -222,6 +222,8 @@ class EvaluatorWorker(multiprocessing.Process):
         self.queue = self.grader.consumer()
 
         self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
+        self._eval_max_attempts = self.grader.config['EVAL_MAX_ATTEMPTS']
+        self._eval_retry_delay = self.grader.config['EVAL_RETRY_DELAY']
 
         # For stopping of the run loop from the main process
         self._stop = multiprocessing.Event()
@@ -235,7 +237,9 @@ class EvaluatorWorker(multiprocessing.Process):
         consumer_thread = threading.Thread(target=self.queue.consume,
                                            args=(self.evaluator.name,
                                                  self.handle_submission,
-                                                 self._eval_thread_count))
+                                                 self._eval_thread_count,
+                                                 self._eval_max_attempts,
+                                                 self._eval_retry_delay))
         consumer_thread.daemon = True
         consumer_thread.start()
 
