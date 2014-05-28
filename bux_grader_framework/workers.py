@@ -60,13 +60,13 @@ class XQueueWorker(multiprocessing.Process):
 
         # For stopping of the run loop from the main process
         self._stop = multiprocessing.Event()
-        self.xqueue.login()
 
     def run(self):
         """ Polls XQueue for submissions. """
         log.info("XQueue worker (PID=%s) is polling for submissions...",
                  self.pid)
 
+        self.xqueue.login()
         self.queue.connect()
         self.pool = Pool(processes=self._xqueue_pool_size)
 
@@ -177,11 +177,22 @@ class XQueueWorker(multiprocessing.Process):
         self.xqueue.put_result(submission, response)
 
     def status(self):
-        log.info("Checking XQueue status...")
+        """ Returns whether or not XQueue / RabbitMQ are reachable. """
+
+        # Sanity check of RabbitMQ connection
+        try:
+            self.queue.connect()
+            self.queue.sleep(1)
+            self.queue.close()
+        except Exception:
+            log.exception("XQueueWorker could not connect to RabbitMQ: ")
+            return False
+
         try:
             status = self.xqueue.status()
         except XQueueException:
             return False
+
         return status
 
     def stop(self):
