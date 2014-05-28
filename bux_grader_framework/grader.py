@@ -50,6 +50,8 @@ class Grader(object):
         "WORKER_MAX_RETRIES": 5,
         "WORKER_RETRY_INTERVAL": 5,
         "EVAL_THREAD_COUNT": 10,
+        "EVAL_MAX_ATTEMPTS": 10,
+        "EVAL_RETRY_DELAY": 10,
         "MONITOR_INTERVAL": 1,
         "RABBITMQ_USER": "guest",
         "RABBITMQ_PASSWORD": "guest",
