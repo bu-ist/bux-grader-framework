@@ -91,7 +91,10 @@ class Grader(object):
         # Start all workers
         for worker in self.workers:
             log.info("Starting worker: %s", worker.name)
-            worker.start()
+            if worker.status():
+                worker.start()
+            else:
+                sys.exit("Could not start worker: %s" % worker.name)
 
         try:
             while self.workers:
