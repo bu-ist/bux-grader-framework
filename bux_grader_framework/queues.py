@@ -221,7 +221,7 @@ class SubmissionConsumer(object):
 
         # A function to be called by the submission handler when the
         # submission has been processed.
-        on_complete = functools.partial(self._on_complete, channel, tag)
+        on_complete = functools.partial(self._on_complete, channel, tag, frame)
 
         # Handle submission in a separate thread to avoid blocking of ioloop.
         thread = threading.Thread(target=self.submission_handler,
@@ -229,7 +229,7 @@ class SubmissionConsumer(object):
         thread.daemon = True
         thread.start()
 
-    def _on_complete(self, channel, tag, success):
+    def _on_complete(self, channel, tag, frame, success):
         """ Called by the submission handler when the submission has been handled.
 
         The submission handler indicates success or failure by passing a bool
@@ -245,18 +245,71 @@ class SubmissionConsumer(object):
             self._connection.add_timeout(0, ack)
             statsd.incr('bux_grader_framework.submissions.success')
         else:
-            log.info(" >> Message %d nack'd", tag)
-            nack = lambda: channel.basic_nack(delivery_tag=tag, requeue=False)
-            self._connection.add_timeout(0, nack)
-            statsd.incr('bux_grader_framework.submissions.failure')
 
-    def consume(self, queue_name, submission_handler, prefetch_count):
+            # We handle requeing manually, adding extra info to the submission
+            # frame to track evaluation attempts.
+            self.requeue_failed_submission(tag, frame)
+
+    def requeue_failed_submission(self, tag, frame):
+        """ Requeue a failed submission.
+
+        The submission will be re-submitted to the same queue after
+        a delay of `self.requeue_delay`.
+
+        The requeued submission includes a counter to track the number
+        of times the submission has been attempted unsuccesfully.
+
+        If `self.max_attempts` is set, it will stop requeing after
+        the message is delivered `self.max_attempts` times.
+
+        """
+        attempt = frame.get('attempt', 1)
+
+        if self.max_attempts and attempt > self.max_attempts:
+            # Log the expired submission and skip requeue.
+            log.error("Unable to evaluate submission #%d after %s attempts",
+                      frame["submission"]["xqueue_header"]["submission_id"],
+                      self.max_attempts)
+            statsd.incr('bux_grader_framework.submissions.failure')
+        else:
+            # Increment failed submission attempt counter.
+            frame['attempt'] = (attempt + 1)
+            log.warning("Requeing failed submission in %s seconds (attempt %d of %d)",
+                        self.requeue_delay, attempt, self.max_attempts)
+
+            # Requeue after the configured delay interval.
+            requeue = functools.partial(self.requeue, tag, frame)
+            self._connection.add_timeout(self.requeue_delay, requeue)
+
+    def requeue(self, tag, submission):
+        """ Nack and requeue a failed submission """
+        properties = pika.BasicProperties(content_type='application/json',
+                                          delivery_mode=2)
+
+        # Nack the original message to remove it from the queue
+        log.info(" >> Message %d nack'd", tag)
+        self._channel.basic_nack(delivery_tag=tag, requeue=False)
+
+        # Re-publish
+        self._channel.basic_publish(exchange='',
+                                    routing_key=self.queue_name,
+                                    body=json.dumps(submission),
+                                    properties=properties)
+
+        statsd.incr('bux_grader_framework.submissions.requeue')
+
+    def consume(self, queue_name, submission_handler, prefetch_count,
+                max_attempts=10, requeue_delay=10):
         """ Start consuming from the designated queue.
 
             :param str queue_name: queue to consume from
             :param callable submission_handler: submission handling callback
             :param int prefetch_count: maximum number of submissions allowed
                                        in queue.
+            :param int max_attempts: maximum number of times to requeue
+                                     submissions that failed to evaluate.
+            :param int requeue_delay: delay in seconds before requeing a failed
+                                      submission.
 
         """
         # Queue to consume submissions from
@@ -268,6 +321,12 @@ class SubmissionConsumer(object):
         # Blocks incoming submissions if more than this
         # amount is present in the queue.
         self.prefetch_count = prefetch_count
+
+        # Failed submission configuration. Any submission that
+        # cannot be handled is nack'd and requeued according
+        # to these values.
+        self.max_attempts = max_attempts
+        self.requeue_delay = requeue_delay
 
         log.info("Starting consumer for queue '{queue}'".format(
             queue=self.queue_name,
@@ -291,6 +350,11 @@ class SubmissionConsumer(object):
 
     def stop(self):
         """ Cancels queue consumer and closes the RabbitMQ connection. """
+
+        # No connection, nothing to close
+        if not self._connection:
+            return
+
         self._closing = True
         if self._channel:
             # Cancel consumer and restart ioloop so it can receive

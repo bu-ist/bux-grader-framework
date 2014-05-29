@@ -15,6 +15,8 @@ from multiprocessing.dummy import Pool
 from string import Template
 from statsd import statsd
 
+from .exceptions import XQueueException
+
 log = logging.getLogger(__name__)
 
 
@@ -58,13 +60,13 @@ class XQueueWorker(multiprocessing.Process):
 
         # For stopping of the run loop from the main process
         self._stop = multiprocessing.Event()
-        self.xqueue.login()
 
     def run(self):
         """ Polls XQueue for submissions. """
         log.info("XQueue worker (PID=%s) is polling for submissions...",
                  self.pid)
 
+        self.xqueue.login()
         self.queue.connect()
         self.pool = Pool(processes=self._xqueue_pool_size)
 
@@ -174,6 +176,25 @@ class XQueueWorker(multiprocessing.Process):
         log.error("Could not handle submission #%d: %s", submit_id, reason)
         self.xqueue.put_result(submission, response)
 
+    def status(self):
+        """ Returns whether or not XQueue / RabbitMQ are reachable. """
+
+        # Sanity check of RabbitMQ connection
+        try:
+            self.queue.connect()
+            self.queue.sleep(1)
+            self.queue.close()
+        except Exception:
+            log.exception("XQueueWorker could not connect to RabbitMQ: ")
+            return False
+
+        try:
+            status = self.xqueue.status()
+        except XQueueException:
+            return False
+
+        return status
+
     def stop(self):
         """ Gracefully shuts down worker process """
         self._stop.set()
@@ -201,6 +222,8 @@ class EvaluatorWorker(multiprocessing.Process):
         self.queue = self.grader.consumer()
 
         self._eval_thread_count = self.grader.config['EVAL_THREAD_COUNT']
+        self._eval_max_attempts = self.grader.config['EVAL_MAX_ATTEMPTS']
+        self._eval_retry_delay = self.grader.config['EVAL_RETRY_DELAY']
 
         # For stopping of the run loop from the main process
         self._stop = multiprocessing.Event()
@@ -214,19 +237,29 @@ class EvaluatorWorker(multiprocessing.Process):
         consumer_thread = threading.Thread(target=self.queue.consume,
                                            args=(self.evaluator.name,
                                                  self.handle_submission,
-                                                 self._eval_thread_count))
+                                                 self._eval_thread_count,
+                                                 self._eval_max_attempts,
+                                                 self._eval_retry_delay))
         consumer_thread.daemon = True
         consumer_thread.start()
 
         # Blocks until stop event is set by main grader process
         try:
-            self._stop.wait()
+            while not self._stop.is_set():
+
+                # If the consumer thread dies unexpectedly we raise an
+                # exception to trigger a restart by the main process.
+                if not consumer_thread.is_alive():
+                    raise Exception("Consumer thread died unexpectedly.")
+
+                time.sleep(1)
+
         except (KeyboardInterrupt, SystemExit):
             pass
-
-        # Stop consumer thread by cancelling queue consumer and
-        # closing RabbitMQ connection
-        self.queue.stop()
+        finally:
+            # Stop consumer thread by cancelling queue consumer and
+            # closing RabbitMQ connection
+            self.queue.stop()
 
         # Wait for consumer thread to exit cleanly
         consumer_thread.join()
@@ -265,6 +298,10 @@ class EvaluatorWorker(multiprocessing.Process):
 
         # Notifies queue to ack / nack message
         on_complete(success)
+
+    def status(self):
+        """ Returns whether or not this evaluator is operational. """
+        return self.evaluator.status()
 
     def stop(self):
         """ Gracefully shuts down worker process """
