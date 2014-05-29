@@ -81,7 +81,10 @@ class Grader(object):
         # Create the XQueue worker
         log.info("Creating XQueue worker process...")
         xqueue_worker = XQueueWorker(self.config['XQUEUE_QUEUE'], self)
-        self.workers.append(xqueue_worker)
+        if xqueue_worker.status():
+            self.workers.append(xqueue_worker)
+        else:
+            sys.exit("Could not start XQueue worker")
 
         # Create an evaluator worker for each registered evaluator
         log.info("Creating evaluator worker processes...")
@@ -91,7 +94,7 @@ class Grader(object):
                 if worker.status():
                     self.workers.append(worker)
                 else:
-                    sys.exit("Could not start worker: %s" % worker.name)
+                    sys.exit("Could not start evaluator worker: %s" % worker.name)
 
         # Start all workers
         for worker in self.workers:
