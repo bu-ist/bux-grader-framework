@@ -129,9 +129,9 @@ class Grader(object):
             if exitcode is None:
                 continue
             # Process has failed
-            elif exitcode >= 1:
+            elif exitcode != 0:
                 failed.append(worker)
-            # Process has finished (0) or been interrupted (<0)
+            # Process has finished (0)
             else:
                 finished.append(worker)
 
@@ -142,7 +142,7 @@ class Grader(object):
 
         # Restart failed workers
         for worker in failed:
-            log.info('Worker failed: %s', worker.name)
+            log.error('Worker failed: %s (%s)', worker, worker.exitcode)
             self.workers.remove(worker)
 
             new_worker = self.restart_worker(worker)
