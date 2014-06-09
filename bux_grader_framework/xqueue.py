@@ -193,7 +193,6 @@ class XQueueClient(object):
             success, content = self._request(url, 'post', data=post_data)
 
         if not success:
-            log.error("Could not post result: {}".format(content))
             raise InvalidGraderReply(content)
 
         log.debug("Succesfully posted result to XQueue.")
@@ -229,8 +228,8 @@ class XQueueClient(object):
 
         # Check status code before attempting to parse
         if response.status_code not in [200]:
-            log.error('HTTP request failed: %s [%d]', response.content,
-                      response.status_code)
+            log.warning('HTTP request failed: %s [%d]', response.content,
+                        response.status_code)
             return False, 'Unexpected HTTP status code [{}]'.format(
                           response.status_code)
 
