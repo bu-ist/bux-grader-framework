@@ -11,6 +11,7 @@ import urlparse
 
 import requests
 from requests.exceptions import Timeout, HTTPError, ConnectionError
+from lxml import etree
 from statsd import statsd
 
 from .exceptions import (XQueueException,
@@ -183,7 +184,9 @@ class XQueueClient(object):
         log.debug("Posting result to XQueue: {}".format(result))
         url = urlparse.urljoin(self.url, "/xqueue/put_result/")
 
-        # TODO: Add validation of submission, result dict
+        # Ensure response `dict` is valid
+        result = self.sanitize_result(result)
+
         post_data = {
             "xqueue_header": json.dumps(submission["xqueue_header"]),
             "xqueue_body": json.dumps(result)
@@ -207,6 +210,41 @@ class XQueueClient(object):
             error_msg = "Could check XQueue status: {}".format(content)
             raise XQueueException(error_msg)
         return True
+
+    def sanitize_result(self, result):
+        """ Validates grader response `dict` to ensure the LMS can handle it.
+
+        Type coercion for score and correct values, XML validation for msg
+        value.
+
+        The LMS is not forgiving if a grader response message contains invalid
+        XML. To work around this we run the message through the same XML
+        function used in the LMS, and if it raises any exceptions we replace
+        this message informing students to notify course staff.
+
+        """
+        valid = {}
+        try:
+            # Santize score / correct
+            valid["correct"] = bool(result["correct"])
+            valid["score"] = float(result["score"])
+
+            # Ensure response message contains valid XML. If it doesn't,
+            # replace it with a message informing students to notify
+            # course staff and log the error.
+            try:
+                etree.fromstring(result["msg"])
+                valid["msg"] = result["msg"]
+            except etree.XMLSyntaxError as e:
+                log.error("Grader response message contains invalid XML: %s (%s)",
+                          result["msg"], e)
+                valid["msg"] = "<div>Unable to display results. Please report this issue to course staff.</div>"
+                statsd.incr('bux_grader_framework.invalid_grader_response')
+
+        except Exception:
+            raise InvalidGraderReply("Invalid grader response")
+
+        return valid
 
     def _request(self, url, method='get', params=None, data=None,
                  retry_login=True):
