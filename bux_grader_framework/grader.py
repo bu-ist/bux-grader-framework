@@ -5,6 +5,7 @@
     This module implements the central grader object.
 """
 
+import datetime
 import importlib
 import logging
 import logging.config
@@ -19,7 +20,7 @@ from .conf import Config
 from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker, DeadLetterWorker
 from .exceptions import ImproperlyConfiguredGrader
-from .xqueue import XQueueClient
+from .xqueue import XQueueClient, XQueueException
 from .queues import SubmissionProducer, SubmissionConsumer, setup_evaluator_queues
 from .util import class_imported_from
 
@@ -153,6 +154,11 @@ class Grader(object):
             log.error('Worker failed: %s (%s)', worker, worker.exitcode)
             self.workers.remove(worker)
 
+            if type(worker) == XQueueWorker:
+                # Block until XQueue is reachable before attempting to
+                # restart the XQueueWorker process.
+                self.wait_for_xqueue()
+
             new_worker = self.restart_worker(worker)
             if new_worker:
                 self.workers.append(new_worker)
@@ -201,6 +207,25 @@ class Grader(object):
         new_worker.start()
 
         return new_worker
+
+    def wait_for_xqueue(self):
+        """ Blocks until XQueue is reachable.
+
+        Polls /xqueue/status/ until it receives a succesful response.
+
+        """
+        xqueue = self.xqueue()
+        down = True
+        started = datetime.datetime.now()
+        while down:
+            try:
+                xqueue.status()
+                down = False
+            except XQueueException:
+                log.info("Still waiting for XQueue...")
+                time.sleep(10)
+
+        log.info("XQueue was down for: %s", unicode(datetime.datetime.now() - started))
 
     def stop(self):
         """ Sets a signal to break out of the `run` loop
