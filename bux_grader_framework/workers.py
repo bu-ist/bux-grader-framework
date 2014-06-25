@@ -15,17 +15,18 @@ from multiprocessing.dummy import Pool
 from string import Template
 from statsd import statsd
 
+from .queues import eval_queue_name, dl_queue_name
 from .exceptions import XQueueException
+from .util import safe_multi_call
 
 log = logging.getLogger(__name__)
 
 
 FAIL_RESPONSE = Template("""
 <div>
-<p>The external grader was unable to process this submission.
-Please contact course staff.</p>
-<p><strong>Reason:</strong></p>
-<pre><code>$reason</code></pre>
+<p>The external grader encountered an unexpected issue and is unable to process your submission at this time.</p>
+$reason
+<p>If this is a graded problem please notify course staff through the discussion forums to get your attempts reset.</p>
 </div>
 """)
 
@@ -134,7 +135,11 @@ class XQueueWorker(multiprocessing.Process):
 
         # Assert the grader payload is a dict
         if not isinstance(payload, dict):
-            self.push_failure("Grader payload could not be parsed", submission)
+            message = FAIL_RESPONSE.substitute(reason="<pre><code>Grader payload could not be parsed</code></pre>")
+            safe_multi_call(self.xqueue.push_failure,
+                            args=(message, submission),
+                            max_attempts=5,
+                            delay=5)
             return False
 
         # Determine which evaluator queue the submission should be routed to
@@ -154,27 +159,15 @@ class XQueueWorker(multiprocessing.Process):
                 statsd.timing('bux_grader_framework.xqueue_lock_wait', lock_elapsed)
 
                 # Enqueue submission for EvaluationWorker
-                self.queue.put(evaluator, frame)
+                queue_name = eval_queue_name(evaluator)
+                self.queue.put(queue_name, frame)
         else:
             # Notify LMS that the submission could not be handled
-            self.push_failure("Evaluator could not be found: {}".format(
-                              evaluator), submission)
-
-    def push_failure(self, reason, submission):
-        """ Sends a failing response to XQueue
-
-            :param str reason: the reason for the failure
-            :param dict submission: the submission that could not be handled
-
-        """
-        submit_id = submission['xqueue_header']['submission_id']
-        response = {
-            "correct": False,
-            "score": 0,
-            "msg": FAIL_RESPONSE.substitute(reason=reason)
-        }
-        log.error("Could not handle submission #%d: %s", submit_id, reason)
-        self.xqueue.put_result(submission, response)
+            message = FAIL_RESPONSE.substitute(reason="<pre><code>Evaluator could not be found: {}</code></pre>".format(evaluator))
+            safe_multi_call(self.xqueue.push_failure,
+                            args=(message, submission),
+                            max_attempts=5,
+                            delay=5)
 
     def status(self):
         """ Returns whether or not XQueue / RabbitMQ are reachable. """
@@ -233,13 +226,13 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("Evaluator worker '%s' (PID=%s) awaiting submissions...",
                  self.evaluator.name, self.pid)
 
+        queue_name = eval_queue_name(self.evaluator.name)
+
         # Start consuming in a separate thread
         consumer_thread = threading.Thread(target=self.queue.consume,
-                                           args=(self.evaluator.name,
+                                           args=(queue_name,
                                                  self.handle_submission,
-                                                 self._eval_thread_count,
-                                                 self._eval_max_attempts,
-                                                 self._eval_retry_delay))
+                                                 self._eval_thread_count))
         consumer_thread.daemon = True
         consumer_thread.start()
 
@@ -275,12 +268,11 @@ class EvaluatorWorker(multiprocessing.Process):
         success = True
         log.info("Evaluating submission #%d", submission_id)
 
-        try:
-            with statsd.timer('bux_grader_framework.evaluate'):
-                result = self.evaluator.evaluate(submission)
-        except Exception:
-            log.exception("Could not evaluate submission: %s", submission)
-            success = False
+        with statsd.timer('bux_grader_framework.evaluate'):
+            result, success = safe_multi_call(self.evaluator.evaluate,
+                                              args=(submission,),
+                                              max_attempts=self._eval_max_attempts,
+                                              delay=self._eval_retry_delay)
 
         # Note time spent in grader (between /xqueue/get_submission/ and
         # /xqueue/put_result/)
@@ -289,12 +281,25 @@ class EvaluatorWorker(multiprocessing.Process):
         log.info("Submission #%d evaluated in %0.3fms",
                  submission_id, elapsed_time)
 
-        if success and result:
-            try:
-                success = self.xqueue.put_result(submission, result)
-            except Exception:
-                log.exception("Could not post reply to XQueue.")
-                success = False
+        # Post response to XQueue
+        if not success or not result:
+            reason = "<pre><code>Submission could not be evaluated in 5 attempts. Please try again later.</code></pre>"
+            message = FAIL_RESPONSE.substitute(reason=reason)
+            result, success = safe_multi_call(self.xqueue.push_failure,
+                                              args=(message, submission),
+                                              max_attempts=5,
+                                              delay=5)
+
+        else:
+            result, success = safe_multi_call(self.xqueue.put_result,
+                                              args=(submission, result),
+                                              max_attempts=5,
+                                              delay=5)
+
+        if success:
+            statsd.incr('bux_grader_framework.submissions.success')
+        else:
+            statsd.incr('bux_grader_framework.submissions.failure')
 
         # Notifies queue to ack / nack message
         on_complete(success)
@@ -302,6 +307,115 @@ class EvaluatorWorker(multiprocessing.Process):
     def status(self):
         """ Returns whether or not this evaluator is operational. """
         return self.evaluator.status()
+
+    def stop(self):
+        """ Gracefully shuts down worker process """
+        self._stop.set()
+
+
+class DeadLetterWorker(multiprocessing.Process):
+    """ Consumes failed submissions from the evaluator dead letter queues.
+
+        :param str evaluator: name of the evaluator
+        :param Grader grader: a configured grader instance
+
+        Submissions will end up in this queue if they are left in the
+        `ready` state for more than 10 seconds, or a EvaluatorWorker dies
+        unexpectedly while processing a submission.
+
+        This ensures that students are notified if the grader is unable
+        to process their submission, and protects the grader from
+        potential outages due to repeat evaluation attempts for bad
+        submissions.
+
+    """
+    def __init__(self, evaluator, grader):
+        super(DeadLetterWorker, self).__init__()
+
+        self.grader = grader
+        self.evaluator = self.grader.evaluator(evaluator)
+
+        self.xqueue = self.grader.xqueue()
+        self.queue = self.grader.consumer()
+
+        # Limits the number of submission this consumer pulls
+        # at any given time.
+        self.prefetch_count = 5
+
+        # For stopping of the run loop from the main process.
+        self._stop = multiprocessing.Event()
+
+    def run(self):
+        """ Polls evaluator dead letter queue. """
+        queue_name = dl_queue_name(eval_queue_name(self.evaluator.name))
+
+        log.info("Dead letter worker monitoring '%s' (PID=%s)...",
+                 queue_name, self.pid)
+
+        # Start consuming in a separate thread
+        consumer_thread = threading.Thread(target=self.queue.consume,
+                                           args=(queue_name,
+                                                 self.handle_submission,
+                                                 self.prefetch_count))
+        consumer_thread.daemon = True
+        consumer_thread.start()
+
+        # Blocks until stop event is set by main grader process
+        try:
+            while not self._stop.is_set():
+
+                # If the consumer thread dies unexpectedly we raise an
+                # exception to trigger a restart by the main process.
+                if not consumer_thread.is_alive():
+                    raise Exception("Consumer thread died unexpectedly.")
+
+                time.sleep(1)
+
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            # Stop consumer thread by cancelling queue consumer and
+            # closing RabbitMQ connection
+            self.queue.stop()
+
+        # Wait for consumer thread to exit cleanly
+        consumer_thread.join()
+
+    def handle_submission(self, frame, on_complete):
+        """ Handles a submission popped off the dead letter queue.
+
+        Pushes a failure response to XQueue to notify students of the issue.
+
+        """
+        submission = frame["submission"]
+        submission_id = submission['xqueue_header']['submission_id']
+        log.info("Pulled submission #%d off of dead letter queue", submission_id)
+        statsd.incr('bux_grader_framework.submissions.dead_lettered')
+
+        # Note time spent in grader
+        elapsed_time = int((time.time() - frame["received_time"])*1000.0)
+        statsd.timing('bux_grader_framework.total_time_spent', elapsed_time)
+        log.info("Submission #%d evaluated in %0.3fms",
+                 submission_id, elapsed_time)
+
+        # Check evaluator for extra context to add to fail message.
+        hints = ''
+        if 'fail_hints' in dir(self.evaluator):
+            hints = self.evaluator.fail_hints()
+
+        # Post response to XQueue.
+        message = FAIL_RESPONSE.substitute(reason=hints)
+        result, success = safe_multi_call(self.xqueue.push_failure,
+                                          args=(message, submission),
+                                          max_attempts=5,
+                                          delay=5)
+
+        # Notifies queue to ack / nack message.
+        on_complete(success)
+
+    def status(self):
+        """ Returns whether or not this evaluator is operational. """
+        return True
 
     def stop(self):
         """ Gracefully shuts down worker process """

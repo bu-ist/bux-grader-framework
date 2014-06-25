@@ -201,6 +201,22 @@ class XQueueClient(object):
         log.debug("Succesfully posted result to XQueue.")
         return success
 
+    def push_failure(self, msg, submission):
+        """ Sends a failing response to XQueue
+
+            :param str msg: message string for response. must contain valid XML.
+            :param dict submission: the submission that could not be handled
+
+        """
+        submit_id = submission['xqueue_header']['submission_id']
+        response = {
+            "correct": False,
+            "score": 0,
+            "msg": msg
+        }
+        log.error("Pushing fail response for submission #%d: %s\n\nReason: %s", submit_id, submission, msg)
+        return self.put_result(submission, response)
+
     def status(self):
         """ Checks service availability via /xqueue/status/ """
         url = urlparse.urljoin(self.url, "/xqueue/status/")

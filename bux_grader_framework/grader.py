@@ -17,10 +17,10 @@ from . import DEFAULT_LOGGING
 
 from .conf import Config
 from .evaluators import registered_evaluators
-from .workers import EvaluatorWorker, XQueueWorker
-from .exceptions import ImproperlyConfiguredGrader, XQueueException
+from .workers import EvaluatorWorker, XQueueWorker, DeadLetterWorker
+from .exceptions import ImproperlyConfiguredGrader
 from .xqueue import XQueueClient
-from .queues import SubmissionProducer, SubmissionConsumer
+from .queues import SubmissionProducer, SubmissionConsumer, setup_evaluator_queues
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -89,12 +89,20 @@ class Grader(object):
         # Create an evaluator worker for each registered evaluator
         log.info("Creating evaluator worker processes...")
         for evaluator in self.evaluators:
+            # Setup evaluator queues
+            log.info("Setting up evaluator queues for: %s", evaluator)
+            setup_evaluator_queues(evaluator, **self.queue_credentials())
+
             for num in range(self.config['WORKER_COUNT']):
                 worker = EvaluatorWorker(evaluator, self)
                 if worker.status():
                     self.workers.append(worker)
                 else:
                     sys.exit("Could not start evaluator worker: %s" % worker.name)
+
+            # Start the dead letter consumer
+            worker = DeadLetterWorker(evaluator, self)
+            self.workers.append(worker)
 
         # Start all workers
         for worker in self.workers:
@@ -260,6 +268,19 @@ class Grader(object):
 
         return XQueueClient(url, username, password, timeout)
 
+    def queue_credentials(self):
+        creds = {}
+        try:
+            creds['username'] = self.config['RABBITMQ_USER']
+            creds['password'] = self.config['RABBITMQ_PASSWORD']
+            creds['host'] = self.config['RABBITMQ_HOST']
+            creds['port'] = self.config['RABBITMQ_PORT']
+            creds['virtual_host'] = self.config['RABBITMQ_VHOST']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return creds
+
     def producer(self):
         """ Returns a queue producer configured for this grader.
 
@@ -267,16 +288,7 @@ class Grader(object):
             >>> producer.put('test_queue', submission)
 
         """
-        try:
-            username = self.config['RABBITMQ_USER']
-            password = self.config['RABBITMQ_PASSWORD']
-            host = self.config['RABBITMQ_HOST']
-            port = self.config['RABBITMQ_PORT']
-            virtual_host = self.config['RABBITMQ_VHOST']
-        except KeyError as e:
-            raise ImproperlyConfiguredGrader(e)
-
-        return SubmissionProducer(username, password, host, port, virtual_host)
+        return SubmissionProducer(**self.queue_credentials())
 
     def consumer(self):
         """ Returns a queue consumer configured for this grader.
@@ -287,16 +299,7 @@ class Grader(object):
                               prefetch_count=10)
 
         """
-        try:
-            username = self.config['RABBITMQ_USER']
-            password = self.config['RABBITMQ_PASSWORD']
-            host = self.config['RABBITMQ_HOST']
-            port = self.config['RABBITMQ_PORT']
-            virtual_host = self.config['RABBITMQ_VHOST']
-        except KeyError as e:
-            raise ImproperlyConfiguredGrader(e)
-
-        return SubmissionConsumer(username, password, host, port, virtual_host)
+        return SubmissionConsumer(**self.queue_credentials())
 
     def evaluator(self, name):
         """ Returns a configured evaluator.
