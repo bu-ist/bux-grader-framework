@@ -16,6 +16,8 @@ from statsd import statsd
 
 log = logging.getLogger(__name__)
 
+DEAD_LETTER_QUEUE = "bux.dead"
+
 
 def eval_queue_name(eval_name):
     """ Generates a queue name from an evaluator name """
@@ -50,15 +52,69 @@ def setup_evaluator_queues(eval_name, username='guest', password='guest',
     queue = eval_queue_name(eval_name)
     dl_queue = dl_queue_name(queue)
 
-    # Declare dead letter queue first
-    channel.queue_declare(queue=dl_queue, durable=True)
+    # Declare a last-stop dead letter queue that is checked on
+    # startup and after XQueueWorker failures.
+    channel.queue_declare(queue=DEAD_LETTER_QUEUE, durable=True)
 
+    # Declare a dead letter queue for evaluation failures.
+    args = {"x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": DEAD_LETTER_QUEUE,
+            "x-message-ttl": message_ttl}
+    channel.queue_declare(queue=dl_queue, durable=True, arguments=args)
+
+    # And finally declare an evaluation queue for submission processing.
     args = {"x-dead-letter-exchange": "",
             "x-dead-letter-routing-key": dl_queue,
             "x-message-ttl": message_ttl}
-    channel.queue_declare(queue=queue,
-                          durable=True,
-                          arguments=args)
+    channel.queue_declare(queue=queue, durable=True, arguments=args)
+
+
+def requeue_failed_submissions(username='guest', password='guest',
+                               host='localhost', port=5672, virtual_host='/'):
+    """ Re-publishes submissions that wound up in the dead letter queue. """
+    # Establish a blocking connection
+    credentials = pika.PlainCredentials(username,
+                                        password)
+    params = pika.ConnectionParameters(host=host,
+                                       port=port,
+                                       virtual_host=virtual_host,
+                                       credentials=credentials)
+
+    connection = pika.BlockingConnection(params)
+    channel = connection.channel()
+
+    # Issue a passive queue declare to get a message count.
+    method_frame = channel.queue_declare(DEAD_LETTER_QUEUE, passive=True)
+    message_count = method_frame.method.message_count
+
+    if message_count:
+
+        props = pika.BasicProperties(content_type='application/json',
+                                     delivery_mode=2)
+
+        # Re-publish each dead lettered message to the original queue.
+        for num in range(message_count):
+            method, original_props, body = channel.basic_get(queue=DEAD_LETTER_QUEUE)
+
+            # The last item in the "x-death" header will always be from the
+            # original delivery.
+            header = original_props.headers["x-death"][-1]
+            queue = header["queue"]
+            log.info("Redelivering dead lettered submission to queue: %s", queue)
+
+            # Re-publish to evaluator queue for re-evaluation.
+            channel.basic_publish(exchange=header["exchange"],
+                                  routing_key=header["queue"],
+                                  body=body,
+                                  properties=props)
+
+            statsd.incr('bux_grader_framework.submissions.redelivered')
+
+            # Acknowledge processing of the dead lettered message
+            channel.basic_ack(method.delivery_tag)
+
+    channel.close()
+    connection.close()
 
 
 class SubmissionProducer(object):
@@ -245,7 +301,7 @@ class SubmissionConsumer(object):
             # fail response for XQueue notifying students of the
             # issue.
             log.info(" >> Message %d nack'd", tag)
-            ack_func = lambda: channel.basic_nack(delivery_tag=tag)
+            ack_func = lambda: channel.basic_nack(delivery_tag=tag, requeue=False)
 
         self._connection.add_timeout(0, ack_func)
 

@@ -21,7 +21,7 @@ from .evaluators import registered_evaluators
 from .workers import EvaluatorWorker, XQueueWorker, DeadLetterWorker
 from .exceptions import ImproperlyConfiguredGrader
 from .xqueue import XQueueClient, XQueueException
-from .queues import SubmissionProducer, SubmissionConsumer, setup_evaluator_queues
+from .queues import SubmissionProducer, SubmissionConsumer, setup_evaluator_queues, requeue_failed_submissions
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -110,6 +110,9 @@ class Grader(object):
             log.info("Starting worker: %s", worker.name)
             worker.start()
 
+        # Check for failed submissions in the dead letter queue.
+        requeue_failed_submissions(**self.queue_credentials())
+
         try:
             while self.workers:
                 self.monitor()
@@ -158,6 +161,11 @@ class Grader(object):
                 # Block until XQueue is reachable before attempting to
                 # restart the XQueueWorker process.
                 self.wait_for_xqueue()
+
+                # Drain the dead letter queue now that XQueue is back online
+                # to make sure any responses that couldn't be posted during
+                # the outage are re-attempted.
+                requeue_failed_submissions(**self.queue_credentials())
 
             new_worker = self.restart_worker(worker)
             if new_worker:
