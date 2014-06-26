@@ -129,8 +129,11 @@ class Grader(object):
             if exitcode is None:
                 continue
             # Process has failed
-            elif exitcode != 0:
+            elif exitcode > 0:
                 failed.append(worker)
+            elif exitcode < 0:
+                log.critical("Worker failed unexpectedly: %s", worker)
+                sys.exit("Exiting due to unexpected worker failure")
             # Process has finished (0)
             else:
                 finished.append(worker)
