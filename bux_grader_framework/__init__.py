@@ -8,7 +8,7 @@
     :license: GNU Affero General Public License
 """
 
-__version__ = '0.3.2'
+__version__ = '0.3.3'
 
 DEFAULT_LOGGING = {
     'version': 1,
