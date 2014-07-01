@@ -8,10 +8,7 @@
 import functools
 import json
 import logging
-import multiprocessing
-import time
 import threading
-import Queue
 
 import pika
 
@@ -19,44 +16,105 @@ from statsd import statsd
 
 log = logging.getLogger(__name__)
 
+DEAD_LETTER_QUEUE = "bux.dead"
 
-class WorkQueue(object):
-    """ Internal submission work queue.
 
-    First pass is a thin wrapper around multiprocessing.Queue.
+def eval_queue_name(eval_name):
+    """ Generates a queue name from an evaluator name """
+    return "bux.evaluator." + eval_name
 
-    Note that the "queue_name" parameter that will be used to route submissions
-    to specific evaluators in the final version is ignored. (A single shared
-    queue is used for simplicity).
+
+def dl_queue_name(queue_name):
+    """ Generates a dead letter queue name from an evaluator name """
+    return queue_name + ".dead"
+
+
+def setup_evaluator_queues(eval_name, username='guest', password='guest',
+                           host='localhost', port=5672, virtual_host='/',
+                           message_ttl=10000):
+    """ Utility method for declaring evaluator queues.
+
+        :param str eval_name: name of the evaluator.
 
     """
-    queue = multiprocessing.Queue()
+    # Establish a blocking connection
+    credentials = pika.PlainCredentials(username,
+                                        password)
+    params = pika.ConnectionParameters(host=host,
+                                       port=port,
+                                       virtual_host=virtual_host,
+                                       credentials=credentials)
 
-    def get(self, queue_name):
-        """ Pop a submission off the work queue """
-        try:
-            submission = self.queue.get(False)
-        except Queue.Empty:
-            return None
-        else:
-            log.info(" < Popped submission #%d off of '%s' queue",
-                     submission["xqueue_header"]["submission_id"], queue_name)
-            return submission
+    connection = pika.BlockingConnection(params)
+    channel = connection.channel()
 
-    def put(self, queue_name, submission):
-        """ Push a submission on to the work queue """
-        log.info(" > Put result for submisson #%d to '%s' queue",
-                 submission["xqueue_header"]["submission_id"], queue_name)
-        self.queue.put(submission)
+    # Setup queue names
+    queue = eval_queue_name(eval_name)
+    dl_queue = dl_queue_name(queue)
 
-    def consume(self, queue_name, handler):
-        """ Poll a particular queue for submissions """
-        while True:
-            submission = self.get(queue_name)
-            if submission:
-                handler(submission)
-            else:
-                time.sleep(1)
+    # Declare a last-stop dead letter queue that is checked on
+    # startup and after XQueueWorker failures.
+    channel.queue_declare(queue=DEAD_LETTER_QUEUE, durable=True)
+
+    # Declare a dead letter queue for evaluation failures.
+    args = {"x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": DEAD_LETTER_QUEUE,
+            "x-message-ttl": message_ttl}
+    channel.queue_declare(queue=dl_queue, durable=True, arguments=args)
+
+    # And finally declare an evaluation queue for submission processing.
+    args = {"x-dead-letter-exchange": "",
+            "x-dead-letter-routing-key": dl_queue,
+            "x-message-ttl": message_ttl}
+    channel.queue_declare(queue=queue, durable=True, arguments=args)
+
+
+def requeue_failed_submissions(username='guest', password='guest',
+                               host='localhost', port=5672, virtual_host='/'):
+    """ Re-publishes submissions that wound up in the dead letter queue. """
+    # Establish a blocking connection
+    credentials = pika.PlainCredentials(username,
+                                        password)
+    params = pika.ConnectionParameters(host=host,
+                                       port=port,
+                                       virtual_host=virtual_host,
+                                       credentials=credentials)
+
+    connection = pika.BlockingConnection(params)
+    channel = connection.channel()
+
+    # Issue a passive queue declare to get a message count.
+    method_frame = channel.queue_declare(DEAD_LETTER_QUEUE, passive=True)
+    message_count = method_frame.method.message_count
+
+    if message_count:
+
+        props = pika.BasicProperties(content_type='application/json',
+                                     delivery_mode=2)
+
+        # Re-publish each dead lettered message to the original queue.
+        for num in range(message_count):
+            method, original_props, body = channel.basic_get(queue=DEAD_LETTER_QUEUE)
+
+            # The last item in the "x-death" header will always be from the
+            # original delivery.
+            header = original_props.headers["x-death"][-1]
+            queue = header["queue"]
+            log.info("Redelivering dead lettered submission to queue: %s", queue)
+
+            # Re-publish to evaluator queue for re-evaluation.
+            channel.basic_publish(exchange=header["exchange"],
+                                  routing_key=header["queue"],
+                                  body=body,
+                                  properties=props)
+
+            statsd.incr('bux_grader_framework.submissions.redelivered')
+
+            # Acknowledge processing of the dead lettered message
+            channel.basic_ack(method.delivery_tag)
+
+    channel.close()
+    connection.close()
 
 
 class SubmissionProducer(object):
@@ -99,7 +157,6 @@ class SubmissionProducer(object):
                  submission_id, queue_name)
 
         channel = self.get_channel()
-        channel.queue_declare(queue=queue_name, durable=True)
 
         properties = pika.BasicProperties(content_type='application/json',
                                           delivery_mode=2)
@@ -193,20 +250,15 @@ class SubmissionConsumer(object):
     def _on_channel_open(self, channel):
         """ Called by Pika when the channel has been established.
 
-        Sets prefetch limit and declares our consumer queue.
+        Sets prefetch limit and begins consuming.
 
         """
         self._channel = channel
 
         channel.basic_qos(prefetch_count=self.prefetch_count)
 
-        channel.queue_declare(queue=self.queue_name,
-                              durable=True,
-                              callback=self._on_queue_declared)
-
-    def _on_queue_declared(self, frame):
         self.consumer_tag = self._channel.basic_consume(self._on_message_received,
-                                                       queue=self.queue_name)
+                                                        queue=self.queue_name)
 
     def _on_message_received(self, channel, method, properties, body):
         """ Called by Pika when a queue message is received.
@@ -241,75 +293,25 @@ class SubmissionConsumer(object):
         """
         if success:
             log.info(" >> Message %d ack'd", tag)
-            ack = lambda: channel.basic_ack(delivery_tag=tag)
-            self._connection.add_timeout(0, ack)
-            statsd.incr('bux_grader_framework.submissions.success')
+            ack_func = lambda: channel.basic_ack(delivery_tag=tag)
         else:
 
-            # We handle requeing manually, adding extra info to the submission
-            # frame to track evaluation attempts.
-            self.requeue_failed_submission(tag, frame)
+            # Nack to move the submission to the dead letter queue.
+            # The DeadLetterWorker will pick it up and generate a
+            # fail response for XQueue notifying students of the
+            # issue.
+            log.info(" >> Message %d nack'd", tag)
+            ack_func = lambda: channel.basic_nack(delivery_tag=tag, requeue=False)
 
-    def requeue_failed_submission(self, tag, frame):
-        """ Requeue a failed submission.
+        self._connection.add_timeout(0, ack_func)
 
-        The submission will be re-submitted to the same queue after
-        a delay of `self.requeue_delay`.
-
-        The requeued submission includes a counter to track the number
-        of times the submission has been attempted unsuccesfully.
-
-        If `self.max_attempts` is set, it will stop requeing after
-        the message is delivered `self.max_attempts` times.
-
-        """
-        attempt = frame.get('attempt', 1)
-
-        if self.max_attempts and attempt > self.max_attempts:
-            # Log the expired submission and skip requeue.
-            log.error("Unable to evaluate submission #%d after %s attempts",
-                      frame["submission"]["xqueue_header"]["submission_id"],
-                      self.max_attempts)
-            statsd.incr('bux_grader_framework.submissions.failure')
-        else:
-            # Increment failed submission attempt counter.
-            frame['attempt'] = (attempt + 1)
-            log.warning("Requeing failed submission in %s seconds (attempt %d of %d)",
-                        self.requeue_delay, attempt, self.max_attempts)
-
-            # Requeue after the configured delay interval.
-            requeue = functools.partial(self.requeue, tag, frame)
-            self._connection.add_timeout(self.requeue_delay, requeue)
-
-    def requeue(self, tag, submission):
-        """ Nack and requeue a failed submission """
-        properties = pika.BasicProperties(content_type='application/json',
-                                          delivery_mode=2)
-
-        # Nack the original message to remove it from the queue
-        log.info(" >> Message %d nack'd", tag)
-        self._channel.basic_nack(delivery_tag=tag, requeue=False)
-
-        # Re-publish
-        self._channel.basic_publish(exchange='',
-                                    routing_key=self.queue_name,
-                                    body=json.dumps(submission),
-                                    properties=properties)
-
-        statsd.incr('bux_grader_framework.submissions.requeue')
-
-    def consume(self, queue_name, submission_handler, prefetch_count,
-                max_attempts=10, requeue_delay=10):
+    def consume(self, queue_name, submission_handler, prefetch_count):
         """ Start consuming from the designated queue.
 
             :param str queue_name: queue to consume from
             :param callable submission_handler: submission handling callback
             :param int prefetch_count: maximum number of submissions allowed
                                        in queue.
-            :param int max_attempts: maximum number of times to requeue
-                                     submissions that failed to evaluate.
-            :param int requeue_delay: delay in seconds before requeing a failed
-                                      submission.
 
         """
         # Queue to consume submissions from
@@ -321,12 +323,6 @@ class SubmissionConsumer(object):
         # Blocks incoming submissions if more than this
         # amount is present in the queue.
         self.prefetch_count = prefetch_count
-
-        # Failed submission configuration. Any submission that
-        # cannot be handled is nack'd and requeued according
-        # to these values.
-        self.max_attempts = max_attempts
-        self.requeue_delay = requeue_delay
 
         log.info("Starting consumer for queue '{queue}'".format(
             queue=self.queue_name,

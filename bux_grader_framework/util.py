@@ -1,4 +1,8 @@
 import hashlib
+import logging
+import time
+
+log = logging.getLogger(__name__)
 
 
 def class_imported_from(cls, modules):
@@ -20,3 +24,27 @@ def make_hashkey(seed):
     h = hashlib.md5()
     h.update(str(seed))
     return h.hexdigest()
+
+
+def safe_multi_call(func, args, max_attempts=5, delay=5):
+    result = None
+    success = True
+    attempt = 1
+    while attempt <= max_attempts:
+        try:
+            result = func(*args)
+            success = True
+            break
+        except Exception as e:
+            log.warning("Safe multi call failed: %s (attempt %d of %d): %s",
+                        func.__name__, attempt, max_attempts, e)
+
+        # Sleep and try again
+        time.sleep(delay)
+        attempt += 1
+    else:
+        log.error("Safe multi call did not succeed after %d attempts: %s Args: %s",
+                  max_attempts, func.__name__, args)
+        success = False
+
+    return result, success

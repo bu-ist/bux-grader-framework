@@ -58,7 +58,7 @@ DUMMY_SUBMISSION = {
 
 DUMMY_GRADER_RESPONSE = {
     "correct": True,
-    "score": 1,
+    "score": 1.0,
     "msg": "<p>Good Job!</p>"
 }
 

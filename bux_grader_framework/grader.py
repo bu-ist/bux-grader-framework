@@ -5,6 +5,7 @@
     This module implements the central grader object.
 """
 
+import datetime
 import importlib
 import logging
 import logging.config
@@ -17,10 +18,10 @@ from . import DEFAULT_LOGGING
 
 from .conf import Config
 from .evaluators import registered_evaluators
-from .workers import EvaluatorWorker, XQueueWorker
-from .exceptions import ImproperlyConfiguredGrader, XQueueException
-from .xqueue import XQueueClient
-from .queues import SubmissionProducer, SubmissionConsumer
+from .workers import EvaluatorWorker, XQueueWorker, DeadLetterWorker
+from .exceptions import ImproperlyConfiguredGrader
+from .xqueue import XQueueClient, XQueueException
+from .queues import SubmissionProducer, SubmissionConsumer, setup_evaluator_queues, requeue_failed_submissions
 from .util import class_imported_from
 
 log = logging.getLogger(__name__)
@@ -89,6 +90,10 @@ class Grader(object):
         # Create an evaluator worker for each registered evaluator
         log.info("Creating evaluator worker processes...")
         for evaluator in self.evaluators:
+            # Setup evaluator queues
+            log.info("Setting up evaluator queues for: %s", evaluator)
+            setup_evaluator_queues(evaluator, **self.queue_credentials())
+
             for num in range(self.config['WORKER_COUNT']):
                 worker = EvaluatorWorker(evaluator, self)
                 if worker.status():
@@ -96,10 +101,17 @@ class Grader(object):
                 else:
                     sys.exit("Could not start evaluator worker: %s" % worker.name)
 
+            # Start the dead letter consumer
+            worker = DeadLetterWorker(evaluator, self)
+            self.workers.append(worker)
+
         # Start all workers
         for worker in self.workers:
             log.info("Starting worker: %s", worker.name)
             worker.start()
+
+        # Check for failed submissions in the dead letter queue.
+        requeue_failed_submissions(**self.queue_credentials())
 
         try:
             while self.workers:
@@ -147,6 +159,16 @@ class Grader(object):
         for worker in failed:
             log.error('Worker failed: %s (%s)', worker, worker.exitcode)
             self.workers.remove(worker)
+
+            if type(worker) == XQueueWorker:
+                # Block until XQueue is reachable before attempting to
+                # restart the XQueueWorker process.
+                self.wait_for_xqueue()
+
+                # Drain the dead letter queue now that XQueue is back online
+                # to make sure any responses that couldn't be posted during
+                # the outage are re-attempted.
+                requeue_failed_submissions(**self.queue_credentials())
 
             new_worker = self.restart_worker(worker)
             if new_worker:
@@ -196,6 +218,25 @@ class Grader(object):
         new_worker.start()
 
         return new_worker
+
+    def wait_for_xqueue(self):
+        """ Blocks until XQueue is reachable.
+
+        Polls /xqueue/status/ until it receives a succesful response.
+
+        """
+        xqueue = self.xqueue()
+        down = True
+        started = datetime.datetime.now()
+        while down:
+            try:
+                xqueue.status()
+                down = False
+            except XQueueException:
+                log.info("Still waiting for XQueue...")
+                time.sleep(10)
+
+        log.info("XQueue was down for: %s", unicode(datetime.datetime.now() - started))
 
     def stop(self):
         """ Sets a signal to break out of the `run` loop
@@ -263,6 +304,19 @@ class Grader(object):
 
         return XQueueClient(url, username, password, timeout)
 
+    def queue_credentials(self):
+        creds = {}
+        try:
+            creds['username'] = self.config['RABBITMQ_USER']
+            creds['password'] = self.config['RABBITMQ_PASSWORD']
+            creds['host'] = self.config['RABBITMQ_HOST']
+            creds['port'] = self.config['RABBITMQ_PORT']
+            creds['virtual_host'] = self.config['RABBITMQ_VHOST']
+        except KeyError as e:
+            raise ImproperlyConfiguredGrader(e)
+
+        return creds
+
     def producer(self):
         """ Returns a queue producer configured for this grader.
 
@@ -270,16 +324,7 @@ class Grader(object):
             >>> producer.put('test_queue', submission)
 
         """
-        try:
-            username = self.config['RABBITMQ_USER']
-            password = self.config['RABBITMQ_PASSWORD']
-            host = self.config['RABBITMQ_HOST']
-            port = self.config['RABBITMQ_PORT']
-            virtual_host = self.config['RABBITMQ_VHOST']
-        except KeyError as e:
-            raise ImproperlyConfiguredGrader(e)
-
-        return SubmissionProducer(username, password, host, port, virtual_host)
+        return SubmissionProducer(**self.queue_credentials())
 
     def consumer(self):
         """ Returns a queue consumer configured for this grader.
@@ -290,16 +335,7 @@ class Grader(object):
                               prefetch_count=10)
 
         """
-        try:
-            username = self.config['RABBITMQ_USER']
-            password = self.config['RABBITMQ_PASSWORD']
-            host = self.config['RABBITMQ_HOST']
-            port = self.config['RABBITMQ_PORT']
-            virtual_host = self.config['RABBITMQ_VHOST']
-        except KeyError as e:
-            raise ImproperlyConfiguredGrader(e)
-
-        return SubmissionConsumer(username, password, host, port, virtual_host)
+        return SubmissionConsumer(**self.queue_credentials())
 
     def evaluator(self, name):
         """ Returns a configured evaluator.
