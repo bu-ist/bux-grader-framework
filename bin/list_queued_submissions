@@ -14,6 +14,7 @@ from pprint import pprint
 import pika
 
 from bux_grader_framework import Grader
+from bux_grader_framework.queues import eval_queue_name
 
 
 def list_pending_submissions(queue, username='guest', password='guest',
@@ -32,6 +33,7 @@ def list_pending_submissions(queue, username='guest', password='guest',
     channel = connection.channel()
 
     # Issue a passive queue declare to get a message count.
+    print "Checking evaluator queue: %s" % queue
     method_frame = channel.queue_declare(queue, passive=True)
     message_count = method_frame.method.message_count
     requeue_tags = []
@@ -41,7 +43,7 @@ def list_pending_submissions(queue, username='guest', password='guest',
 
         # Re-publish each dead lettered message to the original queue.
         for num in range(message_count):
-            method, props, body = channel.basic_get(queue="mysql")
+            method, props, body = channel.basic_get(queue=queue)
             frame = json.loads(body)
             submission = frame["submission"]
 
@@ -88,6 +90,7 @@ if __name__ == "__main__":
     else:
         settings = os.environ.get('GRADER_SETTINGS_MODULE', '')
     print "Settings module: {}".format(settings)
+    print
 
     # Create and configure the grader from the provided settings module
     grader = Grader()
@@ -106,5 +109,4 @@ if __name__ == "__main__":
 
     # Check each evaluator queue for pending submissions
     for evaluator in grader.evaluators:
-        print "Checking queue for evaluator: %s" % evaluator
-        list_pending_submissions(evaluator, **creds)
+        list_pending_submissions(eval_queue_name(evaluator), **creds)

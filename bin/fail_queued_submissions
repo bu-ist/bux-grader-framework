@@ -14,6 +14,7 @@ from pprint import pprint
 import pika
 
 from bux_grader_framework import Grader
+from bux_grader_framework.queues import eval_queue_name
 
 FAIL_RESPONSE = {
     "score": 0.0,
@@ -47,6 +48,7 @@ def fail_pending_submissions(xqueue, queue, force=False, username='guest',
     channel = connection.channel()
 
     # Issue a passive queue declare to get a message count.
+    print "Checking evaluator queue: %s" % queue
     method_frame = channel.queue_declare(queue, passive=True)
     message_count = method_frame.method.message_count
 
@@ -58,7 +60,7 @@ def fail_pending_submissions(xqueue, queue, force=False, username='guest',
 
         # Re-publish each dead lettered message to the original queue.
         for num in range(message_count):
-            method, props, body = channel.basic_get(queue="mysql")
+            method, props, body = channel.basic_get(queue=queue)
             frame = json.loads(body)
             submission = frame["submission"]
 
@@ -139,5 +141,4 @@ if __name__ == "__main__":
 
     # Check each evaluator queue for pending submissions
     for evaluator in grader.evaluators:
-        print "Checking queue for evaluator: %s" % evaluator
-        fail_pending_submissions(grader.xqueue(), evaluator, args.force, **creds)
+        fail_pending_submissions(grader.xqueue(), eval_queue_name(evaluator), args.force, **creds)
