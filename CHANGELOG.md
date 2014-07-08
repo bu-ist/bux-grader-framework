@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+* Queue management script cleanup
+
 ## 0.4.0
 
 * Adds automated recovery for extended XQueue outages.
