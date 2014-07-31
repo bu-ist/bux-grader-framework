@@ -373,7 +373,7 @@ class Grader(object):
         if not self.is_registered_evaluator(name):
             return False
 
-        return self.config['EVALUATOR_CONFIG'].get(name, {})
+        return self.config.get('EVALUATOR_CONFIG', {}).get(name, {})
 
     def is_registered_evaluator(self, name):
         """ Returns whether or not an evaluator is registered by name. """
