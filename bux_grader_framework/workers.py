@@ -129,7 +129,7 @@ class XQueueWorker(multiprocessing.Process):
 
         frame = {"received_by": self.pid, "received_time": received_time}
         header = submission['xqueue_header']
-        payload = submission['xqueue_body']['grader_payload']
+        payload = submission['xqueue_body'].get('grader_payload', {})
 
         log.info("Submission #%d received from XQueue", header['submission_id'])
 
@@ -181,8 +181,10 @@ class XQueueWorker(multiprocessing.Process):
             log.exception("XQueueWorker could not connect to RabbitMQ: ")
             return False
 
+        # Make sure /xqueue/status is responding and that we can log in succesfully
         try:
             status = self.xqueue.status()
+            self.xqueue.login()
         except XQueueException:
             return False
 
@@ -283,7 +285,8 @@ class EvaluatorWorker(multiprocessing.Process):
 
         # Post response to XQueue
         if not success or not result:
-            reason = "<pre><code>Submission could not be evaluated in 5 attempts. Please try again later.</code></pre>"
+            reason = "<pre><code>Submission could not be evaluated in %d attempts. Please try again later.</code></pre>" % (
+                     self._eval_max_attempts)
             message = FAIL_RESPONSE.substitute(reason=reason)
             result, success = safe_multi_call(self.xqueue.push_failure,
                                               args=(message, submission),
