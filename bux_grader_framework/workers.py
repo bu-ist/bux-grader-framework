@@ -285,7 +285,8 @@ class EvaluatorWorker(multiprocessing.Process):
 
         # Post response to XQueue
         if not success or not result:
-            reason = "<pre><code>Submission could not be evaluated in 5 attempts. Please try again later.</code></pre>"
+            reason = "<pre><code>Submission could not be evaluated in %d attempts. Please try again later.</code></pre>" % (
+                     self._eval_max_attempts)
             message = FAIL_RESPONSE.substitute(reason=reason)
             result, success = safe_multi_call(self.xqueue.push_failure,
                                               args=(message, submission),
