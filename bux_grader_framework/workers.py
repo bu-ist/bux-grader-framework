@@ -129,7 +129,7 @@ class XQueueWorker(multiprocessing.Process):
 
         frame = {"received_by": self.pid, "received_time": received_time}
         header = submission['xqueue_header']
-        payload = submission['xqueue_body']['grader_payload']
+        payload = submission['xqueue_body'].get('grader_payload', {})
 
         log.info("Submission #%d received from XQueue", header['submission_id'])
 
