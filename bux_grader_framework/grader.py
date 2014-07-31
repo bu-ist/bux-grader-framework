@@ -44,6 +44,8 @@ class Grader(object):
         "XQUEUE_URL": "http://localhost:18040",
         "XQUEUE_USER": "lms",
         "XQUEUE_PASSWORD": "password",
+        "XQUEUE_BASIC_USER": None,
+        "XQUEUE_BASIC_PASSWORD": None,
         "XQUEUE_TIMEOUT": 10,
         "XQUEUE_POLL_INTERVAL": 1,
         "XQUEUE_POOL_SIZE": 6,
@@ -298,11 +300,13 @@ class Grader(object):
             url = self.config['XQUEUE_URL']
             username = self.config['XQUEUE_USER']
             password = self.config['XQUEUE_PASSWORD']
+            basic_username = self.config['XQUEUE_BASIC_USER']
+            basic_password = self.config['XQUEUE_BASIC_PASSWORD']
             timeout = self.config['XQUEUE_TIMEOUT']
         except KeyError as e:
             raise ImproperlyConfiguredGrader(e)
 
-        return XQueueClient(url, username, password, timeout)
+        return XQueueClient(url, username, password, basic_username, basic_password, timeout)
 
     def queue_credentials(self):
         creds = {}
