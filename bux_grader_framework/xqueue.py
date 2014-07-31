@@ -10,6 +10,7 @@ import logging
 import urlparse
 
 import requests
+from requests.auth import HTTPBasicAuth
 from requests.exceptions import Timeout, HTTPError, ConnectionError
 from lxml import etree
 from statsd import statsd
@@ -36,6 +37,8 @@ class XQueueClient(object):
         :param str url: XQueue URL
         :param str username: Django auth user
         :param str password: Django auth password
+        :param str basic_username: HTTP basic auth user
+        :param str basic_password: HTTP basic auth password
         :param int timeout: Maximum time to wait for XQueue to respond
 
         :raises XQueueTimeout: if XQueue fails to respond in ``timeout``
@@ -68,13 +71,18 @@ class XQueueClient(object):
     QUEUE_NOT_FOUND_MSG = "Queue '%s' not found"
     EMPTY_QUEUE_MSG = "Queue '%s' is empty"
 
-    def __init__(self, url, username, password, timeout=10):
+    def __init__(self, url, username, password, basic_username = None, basic_password = None, timeout=10):
         self.url = url
         self.username = username
         self.password = password
         self.timeout = timeout
 
         self.session = requests.session()
+
+        if basic_username:
+            self.basic_auth = HTTPBasicAuth(basic_username, basic_password)
+        else:
+            self.basic_auth = None
 
     def login(self):
         """ Login to XQueue."""
@@ -272,7 +280,8 @@ class XQueueClient(object):
 
         try:
             response = self.session.request(method, url, params=params,
-                                            data=data, timeout=self.timeout)
+                                            data=data, auth=self.basic_auth,
+                                            timeout=self.timeout)
         except Timeout:
             return False, "XQueue request exceeded timeout of {}s".format(
                           self.timeout)

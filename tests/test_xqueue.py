@@ -2,6 +2,7 @@ import json
 import unittest
 
 import requests
+from requests.auth import HTTPBasicAuth
 from requests.exceptions import Timeout, ConnectionError
 
 from mock import MagicMock, patch
@@ -16,6 +17,8 @@ XQUEUE_TEST_CONFIG = {
     "url": "http://localhost:18040",
     "username": "test",
     "password": "passwd",
+    "basic_username": "edx",
+    "basic_password": "edx",
     "timeout": 10
 }
 
@@ -68,6 +71,18 @@ class TestXQueueClient(unittest.TestCase):
     @patch('bux_grader_framework.xqueue.requests.session')
     def setUp(self, mock_session):
         self.client = XQueueClient(**XQUEUE_TEST_CONFIG)
+
+    @patch('bux_grader_framework.xqueue.requests.session')
+    def test_basic_auth_is_set_correctly(self, mock_session):
+        client = XQueueClient("http://localhost:18040", "test", "passwd", "foo", "bar")
+        self.assertIsInstance(client.basic_auth, HTTPBasicAuth)
+        self.assertEquals(client.basic_auth.username, "foo")
+        self.assertEquals(client.basic_auth.password, "bar")
+
+    @patch('bux_grader_framework.xqueue.requests.session')
+    def test_basic_auth_is_not_required(self, mock_session):
+        client = XQueueClient("http://localhost:18040", "test", "passwd")
+        self.assertIsNone(client.basic_auth)
 
     def test_login(self):
         response = (True, "Logged in")
@@ -233,6 +248,14 @@ class TestXQueueClient(unittest.TestCase):
 
         self.assertEquals(response,
                           self.client._request('http://example.com', 'get'))
+
+    def test__request_basic_auth_fail(self):
+        response = MagicMock(spec=requests.Response())
+        response.status_code = 401
+        self.client.session.request = MagicMock(return_value=response)
+
+        self.assertEquals((False, "Unexpected HTTP status code [401]"),
+                          self.client._request("http://example.com"))
 
     def test__parse_xreply(self):
         xreply = json.dumps({"return_code": 0, "content": "Test content"})
