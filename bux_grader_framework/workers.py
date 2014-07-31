@@ -181,8 +181,10 @@ class XQueueWorker(multiprocessing.Process):
             log.exception("XQueueWorker could not connect to RabbitMQ: ")
             return False
 
+        # Make sure /xqueue/status is responding and that we can log in succesfully
         try:
             status = self.xqueue.status()
+            self.xqueue.login()
         except XQueueException:
             return False
 
