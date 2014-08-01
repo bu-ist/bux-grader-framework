@@ -14,7 +14,7 @@ setup(
     description='An external grader framework for the edX platform.',
     long_description=open('README.md').read(),
     packages=['bux_grader_framework', 'bux_grader_test_framework'],
-    scripts=['bin/grader', 'bin/list_queued_submissions', 'bin/fail_queued_submissions'],
+    scripts=['bin/grader'],
     license='LICENSE',
     install_requires=[
         'requests>=2.0, <3.0',
