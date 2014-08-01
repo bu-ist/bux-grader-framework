@@ -2,6 +2,15 @@
 
 A simple framework for creating specialized [external graders](http://ca.readthedocs.org/en/latest/problems_tools/external_graders.html) for your [edX](http://code.edx.org/) course.
 
+See the [demo course repository](https://github.com/bu-ist/bux-demo-course-grader) for an example course configuration. See the [configuration repository](configuration repository) for a more automated way to set up your grader environment.
+
+## Prerequisites
+
+* A dedicated XQueue queue with authentication credentials
+* [RabbitMQ](http://www.rabbitmq.com/)
+* [libxml2 and libxslt](http://lxml.de/installation.html)
+* [statsd](https://github.com/etsy/statsd/) (optional)
+
 ## Contributing
 
 Pull requests are welcome!
