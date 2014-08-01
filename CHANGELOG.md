@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3
+
+* Open source release
+* Removes queue management scripts
+
 ## 0.4.2
 
 * Adds HTTP basic auth support to XQueueClient
