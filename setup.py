@@ -7,7 +7,7 @@ except ImportError:
 
 setup(
     name='bux-grader-framework',
-    version='0.4.3',
+    version='0.4.4',
     author='Boston University',
     author_email='webteam@bu.edu',
     url='https://github.com/bu-ist/bux-grader-framework/',
