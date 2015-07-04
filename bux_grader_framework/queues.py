@@ -194,7 +194,7 @@ class SubmissionConsumer(object):
         self.username = username
         self.password = password
         self.host = host
-        self.port = port
+        self.port = int(port)
         self.virtual_host = virtual_host
 
         credentials = pika.PlainCredentials(self.username,
