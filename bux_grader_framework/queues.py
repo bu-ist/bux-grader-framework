@@ -41,7 +41,7 @@ def setup_evaluator_queues(eval_name, username='guest', password='guest',
     credentials = pika.PlainCredentials(username,
                                         password)
     params = pika.ConnectionParameters(host=host,
-                                       port=port,
+                                       port=int(port),
                                        virtual_host=virtual_host,
                                        credentials=credentials)
 
@@ -76,7 +76,7 @@ def requeue_failed_submissions(username='guest', password='guest',
     credentials = pika.PlainCredentials(username,
                                         password)
     params = pika.ConnectionParameters(host=host,
-                                       port=port,
+                                       port=int(port),
                                        virtual_host=virtual_host,
                                        credentials=credentials)
 
@@ -124,7 +124,7 @@ class SubmissionProducer(object):
         self.username = username
         self.password = password
         self.host = host
-        self.port = port
+        self.port = int(port)
         self.virtual_host = virtual_host
 
         credentials = pika.PlainCredentials(self.username,
@@ -194,7 +194,7 @@ class SubmissionConsumer(object):
         self.username = username
         self.password = password
         self.host = host
-        self.port = port
+        self.port = int(port)
         self.virtual_host = virtual_host
 
         credentials = pika.PlainCredentials(self.username,

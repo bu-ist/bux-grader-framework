@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+* Ensure pika port parameters are passed as integers
+* Fix SSL InsecurePlatformWarning messages
+
 ## 0.4.3
 
 * Open source release
